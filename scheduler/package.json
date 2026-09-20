@@ -1,0 +1,25 @@
+{
+  "name": "loophole-keeper-scheduler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run types && npm run typecheck && npm test && npm run deploy:dry",
+    "dev": "wrangler dev --test-scheduled",
+    "deploy:dry": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy",
+    "secret:validate": "node --env-file-if-exists=../web/.env.local scripts/sync-secret.mjs --validate-only",
+    "secret:sync": "node --env-file-if-exists=../web/.env.local scripts/sync-secret.mjs",
+    "activate": "npm run check && npm run secret:sync && npm run deploy",
+    "whoami": "wrangler whoami"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.126.0"
+  }
+}

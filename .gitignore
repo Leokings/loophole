@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+artifacts/
+.live-evidence/
+
+# JavaScript / Next.js
+web/node_modules/
+web/.next/
+web/.vercel/
+web/browser-*.png
+scheduler/node_modules/
+scheduler/.wrangler/
+scheduler/.dev.vars*
+!scheduler/.dev.vars.example
+
+# Secrets (keep examples)
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+!**/.env.deploy.example
+
+# Local tooling
+.coverage
+coverage/
+*.log
