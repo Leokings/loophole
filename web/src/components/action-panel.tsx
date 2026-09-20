@@ -146,6 +146,20 @@ export function ActionPanel({
     await onRefresh();
   }
 
+  async function releaseSeat() {
+    const account = wallet || await onConnect();
+    if (!faction || !ownedByWallet(faction.controller, account)) {
+      throw new Error("Only the wallet controlling this faction can release it.");
+    }
+    if (isDemo) {
+      onToast(`${faction.name} returned to autonomous control in the demo.`);
+      return;
+    }
+    const hash = await writeRepublic(account, "release_faction", [selectedFactionId]);
+    onToast(`Faction released to consensus AI · ${hash.slice(0, 10)}…`);
+    await onRefresh();
+  }
+
   async function commitAction() {
     const account = wallet || await onConnect();
     if ((!faction || !ownedByWallet(faction.controller, account)) && !isDemo) {
@@ -280,6 +294,11 @@ export function ActionPanel({
         <div className="claim-callout">
           <div><strong>This seat is autonomous.</strong><span>You can take control without stopping its AI fallback.</span></div>
           <button className="primary-button" type="button" onClick={() => run(claimSeat)} disabled={isPending}>Claim faction</button>
+        </div>
+      ) : faction && ownedByWallet(faction.controller, wallet) ? (
+        <div className="claim-callout">
+          <div><strong>You control this faction.</strong><span>Release it when you are done so consensus AI can resume the seat.</span></div>
+          <button className="secondary-button" type="button" onClick={() => run(releaseSeat)} disabled={isPending}>Release faction</button>
         </div>
       ) : null}
 
