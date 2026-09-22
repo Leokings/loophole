@@ -116,6 +116,12 @@ export type RoundSummary = {
   round_number: number;
 };
 
+export type RoundAction = RoundSummary["actions"][number] & {
+  actor: string;
+  law_text: string;
+  round_number: number;
+};
+
 export type CourtCase = {
   appeal_deadline: number;
   appeal_response_deadline: number;
@@ -154,6 +160,7 @@ export type RepublicSnapshot = {
   cases: CourtCase[];
   court: CourtState | null;
   crisis: Crisis | null;
+  current_actions: RoundAction[];
   factions: Faction[];
   game: GameState;
   laws: Law[];
@@ -173,6 +180,7 @@ export type ActionDraft = {
 };
 
 export type PendingReveal = ActionDraft & {
+  finalized?: boolean;
   nonce: string;
   round: number;
   transactionHash: string;

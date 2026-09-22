@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useState, useTransition } from "react";
 
-import { writeCourt } from "@/lib/genlayer";
+import { waitForFinalizedTransaction, writeCourt } from "@/lib/genlayer";
 import type { RepublicSnapshot } from "@/lib/types";
 
 function sentenceCase(value: string) {
@@ -55,6 +55,12 @@ export function CourtPanel({
     return wallet || onConnect();
   }
 
+  async function confirmFinality(hash: string, label: string) {
+    onToast(`${label} submitted · waiting for GenLayer finality`);
+    await waitForFinalizedTransaction(hash);
+    onToast(`${label} finalized onchain · ${hash.slice(0, 10)}…`);
+  }
+
   async function fileCase() {
     if (!defendant || !lawId || claim.trim().length < 20) {
       throw new Error("Choose a defendant and enacted law, then state a claim of at least 20 characters.");
@@ -73,7 +79,7 @@ export function CourtPanel({
       JSON.stringify([lawId]),
       claim,
     ]);
-    onToast(`Case filed · ${hash.slice(0, 10)}…`);
+    await confirmFinality(hash, "Court case");
     setClaim("");
     setReference("");
     await onRefresh();
@@ -118,7 +124,7 @@ export function CourtPanel({
       throw new Error("This case is already final.");
     }
     const hash = await writeCourt(account, functionName, args);
-    onToast(`${functionName.replaceAll("_", " ")} submitted · ${hash.slice(0, 10)}…`);
+    await confirmFinality(hash, functionName.replaceAll("_", " "));
     setCaseText("");
     await onRefresh();
   }

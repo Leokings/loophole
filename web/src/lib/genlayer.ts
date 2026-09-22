@@ -1,6 +1,6 @@
-import { createClient } from "genlayer-js";
+import { createAccount, createClient, generatePrivateKey } from "genlayer-js";
 import { studionet, testnetBradbury } from "genlayer-js/chains";
-import type { CalldataEncodable } from "genlayer-js/types";
+import { TransactionStatus, type CalldataEncodable } from "genlayer-js/types";
 
 import type {
   ActionDraft,
@@ -13,8 +13,16 @@ import type {
   Office,
   Objective,
   RepublicSnapshot,
+  RoundAction,
   RoundSummary,
 } from "@/lib/types";
+import { assertFinalizedTransaction, type FinalityReceipt } from "@/lib/transaction";
+import {
+  discoverEthereumProvider,
+  ensureWalletNetwork,
+  requestWalletAccount,
+  type EthereumProvider,
+} from "@/lib/wallet";
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
@@ -35,21 +43,66 @@ export const hasLiveCourt = ADDRESS_PATTERN.test(courtAddress);
 
 type HexAddress = `0x${string}`;
 type ClientConfig = NonNullable<Parameters<typeof createClient>[0]>;
-type EthereumProvider = NonNullable<ClientConfig["provider"]>;
+type ClientAccount = ClientConfig["account"];
+type SdkEthereumProvider = NonNullable<ClientConfig["provider"]>;
+type TransactionHash = Parameters<ReturnType<typeof createClient>["waitForTransactionReceipt"]>[0]["hash"];
+
+export type WalletKind = "browser" | "studio";
+export type ConnectedWallet = { address: string; kind: WalletKind };
+
+const STUDIO_SESSION_KEY = "loophole:v1:studio-session-private-key";
+let activeBrowserProvider: EthereumProvider | undefined;
 
 declare global {
   interface Window {
-    ethereum?: EthereumProvider;
+    ethereum?: SdkEthereumProvider;
   }
 }
 
-function clientFor(account?: HexAddress) {
+function clientFor(account?: ClientAccount, provider?: EthereumProvider) {
   return createClient({
     account,
     chain: selectedChain,
     endpoint: rpcUrl,
-    provider: account && typeof window !== "undefined" ? window.ethereum : undefined,
+    provider: provider as SdkEthereumProvider | undefined,
   });
+}
+
+function walletNetwork() {
+  return {
+    blockExplorerUrl: selectedChain.blockExplorers?.default.url,
+    chainId: selectedChain.id,
+    chainName: selectedChain.name,
+    currencyDecimals: selectedChain.nativeCurrency.decimals,
+    currencyName: selectedChain.nativeCurrency.name,
+    currencySymbol: selectedChain.nativeCurrency.symbol,
+    rpcUrl,
+  };
+}
+
+function readStudioSessionAccount(address?: string) {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const privateKey = window.sessionStorage.getItem(STUDIO_SESSION_KEY);
+    if (!privateKey || !/^0x[a-fA-F0-9]{64}$/.test(privateKey)) return undefined;
+    const account = createAccount(privateKey as `0x${string}`);
+    if (address && account.address.toLowerCase() !== address.toLowerCase()) return undefined;
+    return account;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeClientFor(address: string) {
+  const sessionAccount = readStudioSessionAccount(address);
+  if (sessionAccount) return clientFor(sessionAccount);
+
+  if (typeof window === "undefined") throw new Error("Signed writes are only available in the browser.");
+  const provider = activeBrowserProvider ?? await discoverEthereumProvider(window);
+  if (!provider) throw new Error("Reconnect a browser wallet before submitting a signed action.");
+  await ensureWalletNetwork(provider, walletNetwork());
+  activeBrowserProvider = provider;
+  return clientFor(address as HexAddress, provider);
 }
 
 function serializable<T>(value: unknown): T {
@@ -75,18 +128,36 @@ async function read(address: string, functionName: string, args: unknown[] = [])
   });
 }
 
-export async function connectWallet(): Promise<string> {
-  if (typeof window === "undefined" || !window.ethereum) {
-    throw new Error("A browser wallet such as MetaMask is required for signed actions.");
+export async function connectWallet(kind: WalletKind): Promise<ConnectedWallet> {
+  if (typeof window === "undefined") throw new Error("Wallet connection is only available in the browser.");
+
+  if (kind === "studio") {
+    if (configuredNetwork !== "studionet") {
+      throw new Error("The temporary review wallet is available only on gasless GenLayer StudioNet.");
+    }
+    let account = readStudioSessionAccount();
+    if (!account) {
+      const privateKey = generatePrivateKey();
+      window.sessionStorage.setItem(STUDIO_SESSION_KEY, privateKey);
+      account = createAccount(privateKey);
+    }
+    return { address: account.address.toLowerCase(), kind };
   }
-  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-  if (!Array.isArray(accounts) || typeof accounts[0] !== "string") {
-    throw new Error("The wallet did not return an account.");
+
+  const provider = await discoverEthereumProvider(window);
+  if (!provider) {
+    throw new Error("No injected wallet was detected. Use MetaMask in desktop Chrome/Edge, or choose the temporary Studio wallet.");
   }
-  const address = accounts[0] as HexAddress;
-  const client = clientFor(address);
-  await client.connect(configuredNetwork);
-  return address.toLowerCase();
+  const address = await requestWalletAccount(provider);
+  await ensureWalletNetwork(provider, walletNetwork());
+  activeBrowserProvider = provider;
+  return { address, kind };
+}
+
+export function restoreStudioWallet(): ConnectedWallet | null {
+  if (configuredNetwork !== "studionet") return null;
+  const account = readStudioSessionAccount();
+  return account ? { address: account.address.toLowerCase(), kind: "studio" } : null;
 }
 
 export async function writeRepublic(
@@ -95,7 +166,7 @@ export async function writeRepublic(
   args: unknown[] = [],
 ): Promise<string> {
   if (!hasLiveRepublic) throw new Error("No live republic contract is configured.");
-  const client = clientFor(account as HexAddress);
+  const client = await writeClientFor(account);
   const hash = await client.writeContract({
     address: republicAddress as HexAddress,
     args: args as CalldataEncodable[],
@@ -111,7 +182,7 @@ export async function writeCourt(
   args: unknown[] = [],
 ): Promise<string> {
   if (!hasLiveCourt) throw new Error("No live court contract is configured.");
-  const client = clientFor(account as HexAddress);
+  const client = await writeClientFor(account);
   const hash = await client.writeContract({
     address: courtAddress as HexAddress,
     args: args as CalldataEncodable[],
@@ -119,6 +190,21 @@ export async function writeCourt(
     value: 0n,
   });
   return String(hash);
+}
+
+export async function waitForFinalizedTransaction(hash: string): Promise<void> {
+  const receipt = await clientFor().waitForTransactionReceipt({
+    hash: hash as TransactionHash,
+    interval: 3_000,
+    retries: 240,
+    status: TransactionStatus.FINALIZED,
+  }) as unknown as FinalityReceipt;
+  assertFinalizedTransaction(receipt);
+}
+
+export function transactionExplorerUrl(hash: string): string {
+  const base = selectedChain.blockExplorers?.default.url;
+  return base ? `${base.replace(/\/$/, "")}/tx/${hash}` : "";
 }
 
 export function createNonce(): string {
@@ -198,6 +284,11 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
   const objectiveRequests = factions.map((faction) =>
     read(republicAddress, "get_objective", [faction.faction_id]),
   );
+  const currentActionRequests = factions.map((faction) =>
+    read(republicAddress, "get_round_action", [game.round_number, faction.faction_id])
+      .then((action) => serializable<RoundAction>(action))
+      .catch(() => null),
+  );
   const crisisRecord = crisisRaw ? serializable<Crisis & { responses_json?: string }>(crisisRaw) : null;
   const crisis = crisisRecord
     ? { ...crisisRecord, responses: parseJson(crisisRecord.responses_json, []) }
@@ -207,6 +298,9 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     cases: court ? await readCourtCases(court) : [],
     court,
     crisis,
+    current_actions: (await Promise.all(currentActionRequests)).filter(
+      (action): action is RoundAction => action !== null,
+    ),
     factions,
     game,
     laws: serializable<Law[]>(lawsRaw),

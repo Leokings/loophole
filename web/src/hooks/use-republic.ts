@@ -12,8 +12,9 @@ type AcceptedStateResponse = {
   stale: boolean;
 };
 
-async function readAcceptedState(): Promise<AcceptedStateResponse> {
-  const response = await fetch("/api/republic/state", {
+async function readAcceptedState(force = false): Promise<AcceptedStateResponse> {
+  const response = await fetch(force ? "/api/republic/state?fresh=1" : "/api/republic/state", {
+    cache: force ? "no-store" : "default",
     headers: { Accept: "application/json" },
   });
   const body = await response.json() as Partial<AcceptedStateResponse> & { error?: string };
@@ -30,7 +31,7 @@ export function useRepublic() {
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const snapshotRef = useRef<RepublicSnapshot | null>(snapshot);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
     if (!hasLiveRepublic) {
       setSnapshot(demoSnapshot);
       snapshotRef.current = demoSnapshot;
@@ -39,7 +40,7 @@ export function useRepublic() {
     }
     if (!snapshotRef.current) setLoading(true);
     try {
-      const accepted = await readAcceptedState();
+      const accepted = await readAcceptedState(force);
       setSnapshot(accepted.snapshot);
       snapshotRef.current = accepted.snapshot;
       setError(accepted.stale ? "Showing the latest accepted state while StudioNet refreshes." : "");
@@ -55,7 +56,7 @@ export function useRepublic() {
 
   useEffect(() => {
     if (!hasLiveRepublic) return;
-    const kickoff = window.setTimeout(() => void refresh(), 0);
+    const kickoff = window.setTimeout(() => void refresh(true), 0);
     const interval = window.setInterval(() => void refresh(), 60_000);
     return () => {
       window.clearTimeout(kickoff);

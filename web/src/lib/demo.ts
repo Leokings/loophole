@@ -29,6 +29,7 @@ export const demoSnapshot: RepublicSnapshot = {
     season_winners_json: "[]",
     stability: 11,
   },
+  current_actions: [],
   factions: [
     {
       controller: "0x0000000000000000000000000000000000000000",

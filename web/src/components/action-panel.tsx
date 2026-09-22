@@ -6,6 +6,8 @@ import {
   createNonce,
   previewActionCommitment,
   previewObjectiveCommitment,
+  transactionExplorerUrl,
+  waitForFinalizedTransaction,
   writeRepublic,
 } from "@/lib/genlayer";
 import type { ActionDraft, PendingReveal, RepublicSnapshot } from "@/lib/types";
@@ -110,6 +112,7 @@ export function ActionPanel({
   const [isPending, startTransition] = useTransition();
   const faction = snapshot.factions.find((item) => item.faction_id === selectedFactionId);
   const objective = snapshot.objectives.find((item) => item.faction_id === selectedFactionId);
+  const acceptedAction = snapshot.current_actions.find((item) => item.faction_id === selectedFactionId);
   const isAiSeat = faction?.controller_mode === "AI";
 
   const availableActions = useMemo(() => {
@@ -135,6 +138,12 @@ export function ActionPanel({
     });
   }
 
+  async function confirmFinality(hash: string, label: string) {
+    onToast(`${label} submitted · waiting for GenLayer finality`);
+    await waitForFinalizedTransaction(hash);
+    onToast(`${label} finalized onchain · ${hash.slice(0, 10)}…`);
+  }
+
   async function claimSeat() {
     const account = wallet || await onConnect();
     if (isDemo) {
@@ -142,7 +151,7 @@ export function ActionPanel({
       return;
     }
     const hash = await writeRepublic(account, "claim_faction", [selectedFactionId]);
-    onToast(`Seat claim submitted · ${hash.slice(0, 10)}…`);
+    await confirmFinality(hash, "Faction claim");
     await onRefresh();
   }
 
@@ -156,7 +165,7 @@ export function ActionPanel({
       return;
     }
     const hash = await writeRepublic(account, "release_faction", [selectedFactionId]);
-    onToast(`Faction released to consensus AI · ${hash.slice(0, 10)}…`);
+    await confirmFinality(hash, "Faction release");
     await onRefresh();
   }
 
@@ -177,7 +186,16 @@ export function ActionPanel({
     const key = actionStorageKey("republic", snapshot.game.round_number, selectedFactionId);
     window.localStorage.setItem(key, JSON.stringify(record));
     setPendingReveal(record);
-    onToast(`Action sealed onchain · ${transactionHash.slice(0, 10)}…`);
+    try {
+      await confirmFinality(transactionHash, "Action commitment");
+    } catch (cause) {
+      window.localStorage.removeItem(key);
+      setPendingReveal(null);
+      throw cause;
+    }
+    const finalizedRecord = { ...record, finalized: true };
+    window.localStorage.setItem(key, JSON.stringify(finalizedRecord));
+    setPendingReveal(finalizedRecord);
     await onRefresh();
   }
 
@@ -198,11 +216,11 @@ export function ActionPanel({
       pendingReveal.rationale,
       pendingReveal.nonce,
     ]);
+    await confirmFinality(hash, "Action reveal");
     window.localStorage.removeItem(
       actionStorageKey("republic", snapshot.game.round_number, selectedFactionId),
     );
     setPendingReveal(null);
-    onToast(`Reveal submitted · ${hash.slice(0, 10)}…`);
     await onRefresh();
   }
 
@@ -218,7 +236,7 @@ export function ActionPanel({
         ? "start_next_season"
         : "advance_round";
     const hash = await writeRepublic(account, method);
-    onToast(`${method.replaceAll("_", " ")} submitted · ${hash.slice(0, 10)}…`);
+    await confirmFinality(hash, method.replaceAll("_", " "));
     await onRefresh();
   }
 
@@ -239,11 +257,11 @@ export function ActionPanel({
       nonce,
     );
     const hash = await writeRepublic(account, "commit_objective", [selectedFactionId, commitment]);
+    await confirmFinality(hash, "Objective commitment");
     window.localStorage.setItem(
       objectiveStorageKey("republic", snapshot.game.season_number, selectedFactionId),
       JSON.stringify({ nonce, objectiveTarget, objectiveType }),
     );
-    onToast(`Objective sealed · ${hash.slice(0, 10)}…`);
     await onRefresh();
   }
 
@@ -263,8 +281,8 @@ export function ActionPanel({
       secret.objectiveTarget,
       secret.nonce,
     ]);
+    await confirmFinality(hash, "Objective reveal");
     window.localStorage.removeItem(key);
-    onToast(`Objective revealed · ${hash.slice(0, 10)}…`);
     await onRefresh();
   }
 
@@ -299,6 +317,30 @@ export function ActionPanel({
         <div className="claim-callout">
           <div><strong>You control this faction.</strong><span>Release it when you are done so consensus AI can resume the seat.</span></div>
           <button className="secondary-button" type="button" onClick={() => run(releaseSeat)} disabled={isPending}>Release faction</button>
+        </div>
+      ) : null}
+
+      {pendingReveal ? (
+        <div className={`commit-proof ${pendingReveal.finalized ? "is-final" : "is-waiting"}`} role="status">
+          <div>
+            <strong>{pendingReveal.finalized ? "Action commitment finalized" : "Action commitment submitted"}</strong>
+            <span>Round {pendingReveal.round} · {actionLabels[pendingReveal.action_type] ?? pendingReveal.action_type}</span>
+          </div>
+          <a href={transactionExplorerUrl(pendingReveal.transactionHash)} rel="noreferrer" target="_blank">
+            View transaction
+          </a>
+        </div>
+      ) : null}
+
+      {!pendingReveal && acceptedAction ? (
+        <div className="commit-proof is-final" role="status">
+          <div>
+            <strong>Revealed action accepted onchain</strong>
+            <span>
+              Round {acceptedAction.round_number} · {actionLabels[acceptedAction.action_type] ?? acceptedAction.action_type} · {acceptedAction.source}
+            </span>
+          </div>
+          <span>Accepted-state readback</span>
         </div>
       ) : null}
 
@@ -368,7 +410,9 @@ export function ActionPanel({
       <div className="action-footer">
         <span className="commit-note">Actions are sealed first. The reveal phase prevents AI factions from reacting to hidden human moves.</span>
         {snapshot.game.phase === "COMMIT" ? (
-          <button className="primary-button" type="button" onClick={() => run(commitAction)} disabled={isPending}>Seal action</button>
+          <button className="primary-button" type="button" onClick={() => run(commitAction)} disabled={isPending || Boolean(pendingReveal)}>
+            {pendingReveal ? "Action sealed" : "Seal action"}
+          </button>
         ) : snapshot.game.phase === "REVEAL" ? (
           <button className="primary-button" type="button" onClick={() => run(revealAction)} disabled={isPending || !pendingReveal}>Reveal action</button>
         ) : canAdvance ? (

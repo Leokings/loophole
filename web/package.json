@@ -15,7 +15,8 @@
     "verify:deployment": "node scripts/verify-deployment.mjs",
     "hosting:configure": "node --env-file-if-exists=.env.local scripts/configure-vercel.mjs",
     "release:init": "node scripts/create-release-secrets.mjs",
-    "release:status": "node --env-file-if-exists=.env.local scripts/release-status.mjs"
+    "release:status": "node --env-file-if-exists=.env.local scripts/release-status.mjs",
+    "smoke:reviewer-wallet": "node scripts/reviewer-wallet-smoke.mjs"
   },
   "dependencies": {
     "genlayer-js": "1.1.8",

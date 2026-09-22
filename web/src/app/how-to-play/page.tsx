@@ -74,6 +74,24 @@ export default function HowToPlayPage() {
       </section>
 
       <div className="guide-content">
+        <section className="guide-section action-reference" id="wallet-flow" aria-labelledby="wallet-flow-title">
+          <div className="guide-section-heading">
+            <span className="eyebrow">Exact supported wallet flow</span>
+            <h2 id="wallet-flow-title">Connect, claim, seal, finalize.</h2>
+            <p>Use desktop Chrome or Edge with an injected EIP-1193 wallet such as MetaMask, or choose the one-click temporary Studio wallet. Both paths sign real transactions on this deployed StudioNet republic.</p>
+          </div>
+          <div className="guide-action-grid">
+            <article><span>01</span><h3>Connect</h3><p>Select Browser wallet and approve account access plus GenLayer StudioNet, or select Temporary Studio wallet when no extension is available.</p></article>
+            <article><span>02</span><h3>Claim a faction</h3><p>Choose an autonomous faction and press Claim faction. The interface waits for FINALIZED and then reloads uncached contract state.</p></article>
+            <article><span>03</span><h3>Seal an action</h3><p>During Commit, choose an action and rationale. After finality, a transaction link remains visible until the Reveal phase.</p></article>
+            <article><span>04</span><h3>Reveal</h3><p>Return during Reveal and submit the stored secret. Loophole again waits for FINALIZED before showing the accepted result.</p></article>
+          </div>
+          <aside className="guide-tip">
+            <strong>Reviewer-safe path.</strong>
+            <p>The temporary Studio wallet creates its key locally and keeps it in this browser tab only. It requires no extension, seed phrase, token purchase, or copied private key.</p>
+          </aside>
+        </section>
+
         <section className="guide-section" id="game-loop" aria-labelledby="loop-title">
           <div className="guide-section-heading">
             <span className="eyebrow">The game in sixty seconds</span>
@@ -178,7 +196,7 @@ export default function HowToPlayPage() {
           <div>
             <details open>
               <summary>Does playing cost gas?</summary>
-              <p>No. This deployment runs on gasless GenLayer StudioNet. You still connect a wallet so your chosen seat and signed actions belong to you.</p>
+              <p>No. This deployment runs on gasless GenLayer StudioNet. Connect MetaMask in desktop Chrome or Edge, or use the temporary Studio wallet offered by the app. The interface waits for transaction finality before presenting a write as complete.</p>
             </details>
             <details>
               <summary>What happens if I miss reveal?</summary>

@@ -11,7 +11,7 @@ const ACCEPTED_STATE_CACHE = {
 
 const NO_STORE = { "Cache-Control": "no-store", "Retry-After": "30" };
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!hasLiveRepublic) {
     return Response.json(
       { error: "No live republic contract is configured." },
@@ -20,8 +20,9 @@ export async function GET() {
   }
 
   try {
-    const accepted = await republicSnapshotCache.get(readRepublicSnapshot);
-    return Response.json(accepted, { headers: ACCEPTED_STATE_CACHE });
+    const force = new URL(request.url).searchParams.get("fresh") === "1";
+    const accepted = await republicSnapshotCache.get(readRepublicSnapshot, Date.now(), force);
+    return Response.json(accepted, { headers: force ? { "Cache-Control": "no-store" } : ACCEPTED_STATE_CACHE });
   } catch (cause) {
     console.error("Accepted-state refresh failed", cause);
     return Response.json(

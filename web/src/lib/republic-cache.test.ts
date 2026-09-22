@@ -40,4 +40,39 @@ describe("republic snapshot cache", () => {
       throw new Error("offline");
     })).rejects.toThrow("offline");
   });
+
+  it("forces a post-transaction read instead of returning the cached snapshot", async () => {
+    const cache = createRepublicSnapshotCache({ ttlMs: 60_000 });
+    const updatedSnapshot = {
+      ...demoSnapshot,
+      game: { ...demoSnapshot.game, round_number: demoSnapshot.game.round_number + 1 },
+    };
+    await cache.get(async () => demoSnapshot, 1_000);
+
+    const result = await cache.get(async () => updatedSnapshot, 2_000, true);
+
+    expect(result.snapshot.game.round_number).toBe(updatedSnapshot.game.round_number);
+    expect(result.observedAt).toBe(2_000);
+  });
+
+  it("does not let an older in-flight read hide a forced post-transaction refresh", async () => {
+    const cache = createRepublicSnapshotCache({ ttlMs: 60_000 });
+    const updatedSnapshot = {
+      ...demoSnapshot,
+      game: { ...demoSnapshot.game, round_number: demoSnapshot.game.round_number + 1 },
+    };
+    let releaseOlderRead: (() => void) | undefined;
+    const olderRead = cache.get(() => new Promise((resolve) => {
+      releaseOlderRead = () => resolve(demoSnapshot);
+    }), 1_000);
+
+    const forced = await cache.get(async () => updatedSnapshot, 2_000, true);
+    releaseOlderRead?.();
+    await olderRead;
+    const cached = await cache.get(async () => demoSnapshot, 2_500);
+
+    expect(forced.snapshot.game.round_number).toBe(updatedSnapshot.game.round_number);
+    expect(cached.snapshot.game.round_number).toBe(updatedSnapshot.game.round_number);
+    expect(cached.observedAt).toBe(2_000);
+  });
 });

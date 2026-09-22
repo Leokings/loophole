@@ -4,6 +4,27 @@ Loophole is a population-independent political strategy game built natively on G
 
 The live game is available at [loophole-zeta.vercel.app](https://loophole-zeta.vercel.app). It reads the gasless StudioNet republic at `0x6ECdc692BE72c75a3CD15197c32D61dbd61660D8` and court at `0x315fD6524eB1eb85c907F45FA4d24A896FCF40b2`; a Cloudflare trigger wakes the Vercel keeper every five minutes. StudioNet is temporary and may reset, so the deployment artifact and release scripts are designed to roll forward to a replacement pair.
 
+### Reviewer wallet-flow verification — September 22, 2026
+
+The live frontend now offers two explicit signed paths: an injected EIP-1193
+wallet in desktop Chrome or Edge, and a one-click temporary StudioNet wallet
+whose key remains in that browser tab. Every write waits for GenLayer
+`FINALIZED`, rejects a consensus disagreement or execution failure, then forces
+an uncached accepted-state read. Current-round reveals are read back from the
+contract and rendered as accepted on-chain actions even after a reload. The
+temporary wallet also restores after a page reload, so a player can return for
+the reveal phase without losing the commit secret.
+
+Wallet `0x4eb7210ad49e0f56fe25782b9c77151754c4c624` completed the requested live
+path against the deployed republic. Contract readback for round 135 records
+`BUILD_INFLUENCE`, actor `0x4eb7…c624`, and source `HUMAN`. The test seat was
+released afterward and is autonomous again.
+
+- [Claim Civic Reformers](https://explorer-studio.genlayer.com/tx/0x92fbd22527df704a41a04facfc8a7c2a6f27aca2f3f377c11f637df01406b465)
+- [Finalize the round-135 action commitment](https://explorer-studio.genlayer.com/tx/0x56c762e428315821fdd234817a90194254d32e80fb93249491aacae358f1e1ba)
+- [Reveal the round-135 human action](https://explorer-studio.genlayer.com/tx/0x5b3d51bd5b7a45fedf212deda70c0073e755462899ee5b5edff1f6475dfd4b21)
+- [Release Civic Reformers back to consensus AI](https://explorer-studio.genlayer.com/tx/0x8990f24e8a3f89a93f3e7762bcfa19b4a54c4b6008593d0b882580bf432cf357)
+
 ### Finalized two-wallet production proof
 
 The current pair was deployed from the repository source, linked in both
