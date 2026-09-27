@@ -2,14 +2,14 @@
 
 Loophole is a population-independent political strategy game built natively on GenLayer. A republic keeps moving even when nobody is online: human players may claim faction seats and use private commit/reveal turns, while the Intelligent Contract supplies consensus-validated actions for every empty or timed-out seat.
 
-The live game is available at [loophole-zeta.vercel.app](https://loophole-zeta.vercel.app). It reads the gasless StudioNet republic at `0xC075b19FbeC7B328C2F264B0374eD6b1F977E7Ea` and court at `0x28f5AB33C7a881011FDf6D8399dE9c31f4Eb97A2`; a Cloudflare trigger wakes the Vercel keeper every five minutes. StudioNet is temporary and may reset, so the deployment artifact and release scripts are designed to roll forward to a replacement pair.
+The live game is available at [loophole-zeta.vercel.app](https://loophole-zeta.vercel.app). It reads the gasless StudioNet republic at `0x23d1BA4a2c1FA521b2442C40A378CCcE4386482b` and court at `0xB6E23a4d22aD91d8df68aAf7808B2c848eE280cc`; a Cloudflare trigger wakes the Vercel keeper every five minutes. StudioNet is temporary and may reset, so the deployment artifact and release scripts are designed to roll forward to a replacement pair.
 
 ### Authority-integrity release — September 27, 2026
 
 This release closes the reviewer-reported first-filer and expired-controller
 authority gaps while retaining the earlier liveness and recovery protections:
 
-- Court V3 deduplicates one legal claim by action, plaintiff, and canonical cited-law set. A weak or `NO_VIOLATION` filing therefore cannot block another plaintiff or a distinct legal theory against the same action.
+- Court V4 deduplicates only the same canonical action/plaintiff/law/claim tuple. A weak or `NO_VIOLATION` filing therefore cannot block a revised claim under the same law, another plaintiff, or a distinct legal theory against the same action.
 - Republic V6 still applies at most one numeric sanction to the underlying faction action. A later valid claim can create precedent, but it cannot multiply the penalty.
 - The republic now exposes `is_active_faction_controller`; filing, briefs, appeals, and appeal responses all require this authoritative lease check. A recoverable expired seat's stale stored address grants no court authority.
 - Filings close after eight republic rounds.
@@ -18,7 +18,7 @@ authority gaps while retaining the earlier liveness and recovery protections:
 - Human faction control is a renewable bounded lease. If a temporary browser wallet disappears, the expired seat becomes recoverable instead of remaining orphaned forever.
 - Action and objective nonces are saved before polling. An RPC timeout or incomplete receipt preserves the secret and offers a finality retry; only a definitive finalized failure deletes it.
 
-The deployed V6/V3 sources, schemas, authority markers, queue readback, and
+The deployed V6/V4 sources, schemas, authority markers, queue readback, and
 cross-links are independently rechecked by `npm run verify:deployment`. Forty-one
 direct tests cover first-filer resistance, action-level sanction idempotence,
 expired-controller rejection across every party write, and the existing game
@@ -26,11 +26,10 @@ state transitions. The five-validator integration still forces the original
 callback failure, confirms the republic remains unchanged, then replays it and
 verifies exactly one sanction in accepted state.
 
-- [Deploy AutonomousRepublic V6](https://explorer-studio.genlayer.com/tx/0x3fa14b48943f8e3f2ffa756b576bab872af2abd777537f4dc97b56dceb9b074b)
-- [Deploy RepublicCourt V3](https://explorer-studio.genlayer.com/tx/0x672a73830319221852fddb9e15e75a1587fb62c0aec237b52c0ca87df64d80fb)
-- [Link the V6 republic to the V3 court](https://explorer-studio.genlayer.com/tx/0xb76c2626639a8aab1a3c9ebb37797657c042195a48467ce9ee3f0327a72db570)
-- [Production keeper advances the V6 republic](https://explorer-studio.genlayer.com/tx/0xe5b9f0e275967b089c3d807bdb45b275c59e8542114443d3ba4e46d9fa16c702) — `FINALIZED`, `MAJORITY_AGREE`, successful leader execution; forced production readback moved from round 1 to round 2.
-- [Secret-free deployment and source-hash record](deployments/studionet-2026-09-27T15-48-18.293Z.json)
+- [Deploy AutonomousRepublic V6](https://explorer-studio.genlayer.com/tx/0x769de9cd82134fc1182b7ceb63f432c340e228ac88a3cfb60eb0a404fec14ce9)
+- [Deploy RepublicCourt V4](https://explorer-studio.genlayer.com/tx/0xa701ab516c5e18d847362d5743058727ef2ef62ac0cb677462e3121c6bebeb49)
+- [Link the V6 republic to the V4 court](https://explorer-studio.genlayer.com/tx/0x36ac1e9ec10d1ed9669a8d255d157742fc717940f45a535901022df062baf674)
+- [Secret-free deployment and source-hash record](deployments/studionet-2026-09-27T16-07-18.987Z.json)
 
 ### Reviewer wallet-flow verification — September 22, 2026
 
@@ -91,7 +90,7 @@ This is the complete game foundation, not a throwaway MVP. It includes the auton
 - Executive, Speaker, and Treasurer offices with recurring elections and deterministic powers.
 - Consensus-generated crises, independently audited response scores, and deterministic rewards or penalties.
 - Eight-to-thirty-round seasons, public event scoring, secret objective commit/reveal, winners, and persistent lifetime points.
-- A separate `RepublicCourt` that freezes evidence from republic state, bounds filing age, deduplicates action/plaintiff/law claims without first-filer immunity, enforces live faction leases, maintains an oldest-first open queue, handles appeals and precedent, and supports action-idempotent sanction recovery.
+- A separate `RepublicCourt` that freezes evidence from republic state, bounds filing age, rejects only an exact canonical action/plaintiff/law/claim duplicate, enforces live faction leases, maintains an oldest-first open queue, handles appeals and precedent, and supports action-idempotent sanction recovery.
 - A responsive Next.js game client with a polished demo world when no contract address is configured.
 - A protected Vercel keeper endpoint plus a five-minute Cloudflare scheduler that advances ready republic phases and court deadlines without making any game decision.
 - Direct tests plus a five-validator, two-contract GLSim integration scenario.

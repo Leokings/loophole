@@ -62,10 +62,10 @@ async function main() {
     throw new Error("AutonomousRepublic does not expose the expected control-recovery release state");
   }
   if (
-    courtState.contract_version !== "0.3.0"
-    || courtState.policy_version !== "LOOPHOLE_REPUBLIC_COURT_V3"
+    courtState.contract_version !== "0.4.0"
+    || courtState.policy_version !== "LOOPHOLE_REPUBLIC_COURT_V4"
     || Number(courtState.max_case_age_rounds) !== 8
-    || courtState.claim_deduplication !== "ACTION_PLAINTIFF_LAWS"
+    || courtState.claim_deduplication !== "ACTION_PLAINTIFF_LAWS_CLAIM"
     || courtState.sanction_deduplication !== "ACTION"
   ) {
     throw new Error("RepublicCourt does not expose the expected integrity release state");

@@ -11,8 +11,8 @@ import datetime
 import json
 
 
-CONTRACT_VERSION = "0.3.0"
-POLICY_VERSION = "LOOPHOLE_REPUBLIC_COURT_V3"
+CONTRACT_VERSION = "0.4.0"
+POLICY_VERSION = "LOOPHOLE_REPUBLIC_COURT_V4"
 DIGEST_DOMAIN = "LOOPHOLE_REPUBLIC_COURT"
 
 STATUS_BRIEFING = "BRIEFING"
@@ -495,6 +495,7 @@ class RepublicCourt(gl.Contract):
         defendant_faction_id: str,
         plaintiff_faction_id: str,
         cited_law_ids_json: str,
+        claim_text: str,
     ) -> str:
         """Deduplicate one legal theory without immunizing the action itself.
 
@@ -510,6 +511,7 @@ class RepublicCourt(gl.Contract):
                 defendant_faction_id,
                 plaintiff_faction_id,
                 cited_law_ids_json,
+                claim_text,
             ],
         )
 
@@ -694,7 +696,7 @@ class RepublicCourt(gl.Contract):
             "open_case_tail": self.open_case_tail,
             "precedent_count": self.precedent_count,
             "max_case_age_rounds": MAX_CASE_AGE_ROUNDS,
-            "claim_deduplication": "ACTION_PLAINTIFF_LAWS",
+            "claim_deduplication": "ACTION_PLAINTIFF_LAWS_CLAIM",
             "sanction_deduplication": "ACTION",
         }
 
@@ -822,6 +824,7 @@ class RepublicCourt(gl.Contract):
             defendant_id,
             plaintiff_id,
             canonical_law_ids_json,
+            canonical_claim,
         )
         if claim_key in self.case_by_claim:
             _expected("CASE_CLAIM_DUPLICATE")

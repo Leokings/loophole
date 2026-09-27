@@ -195,12 +195,12 @@ def test_initializes_a_republic_bound_court(direct_vm, direct_deploy, direct_bob
     court = deploy_court(direct_vm, direct_deploy, direct_bob)
     state = court.get_court()
 
-    assert state["contract_version"] == "0.3.0"
-    assert state["policy_version"] == "LOOPHOLE_REPUBLIC_COURT_V3"
+    assert state["contract_version"] == "0.4.0"
+    assert state["policy_version"] == "LOOPHOLE_REPUBLIC_COURT_V4"
     assert state["brief_seconds"] == 60
     assert state["case_count"] == 0
     assert state["max_case_age_rounds"] == 8
-    assert state["claim_deduplication"] == "ACTION_PLAINTIFF_LAWS"
+    assert state["claim_deduplication"] == "ACTION_PLAINTIFF_LAWS_CLAIM"
     assert state["sanction_deduplication"] == "ACTION"
 
 
@@ -247,6 +247,16 @@ def test_weak_case_cannot_immunize_action_from_distinct_valid_claims(
     direct_vm.warp(as_iso(court.get_case(1)["appeal_deadline"]))
     court.finalize_case(1)
 
+    direct_vm.sender = direct_alice
+    assert court.file_case(
+        "CASE-REFORMER-REVISED-CLAIM",
+        "REFORMERS",
+        "MERCHANTS",
+        1,
+        "[1]",
+        "A materially revised factual claim under the same law remains reviewable after the first weak case ends without a violation.",
+    ) == 2
+
     direct_vm.sender = direct_bob
     assert court.file_case(
         "CASE-TRADITIONALIST-CLAIM",
@@ -255,7 +265,7 @@ def test_weak_case_cannot_immunize_action_from_distinct_valid_claims(
         1,
         "[1]",
         "A separate plaintiff may pursue its own good-faith legal claim after the first case ends without a violation.",
-    ) == 2
+    ) == 3
 
     direct_vm.sender = direct_alice
     assert court.file_case(
@@ -265,26 +275,28 @@ def test_weak_case_cannot_immunize_action_from_distinct_valid_claims(
         1,
         "[2]",
         "The same plaintiff may cite a distinct enacted law that presents a separate legal theory for the recorded action.",
-    ) == 3
+    ) == 4
 
     assert court.get_case(1)["action_key"] == court.get_case(2)["action_key"]
     assert court.get_case(1)["action_key"] == court.get_case(3)["action_key"]
+    assert court.get_case(1)["action_key"] == court.get_case(4)["action_key"]
     assert court.get_case(1)["claim_key"] != court.get_case(2)["claim_key"]
     assert court.get_case(1)["claim_key"] != court.get_case(3)["claim_key"]
+    assert court.get_case(1)["claim_key"] != court.get_case(4)["claim_key"]
 
-    direct_vm.sender = direct_bob
+    direct_vm.sender = direct_alice
     with direct_vm.expect_revert("CASE_CLAIM_DUPLICATE"):
         court.file_case(
-            "CASE-TRADITIONALIST-DUPLICATE",
-            "TRADITIONALISTS",
+            "CASE-EXACT-DUPLICATE",
+            "REFORMERS",
             "MERCHANTS",
             1,
             "[1]",
-            "Changing the reference or wording cannot duplicate the same plaintiff, action, and canonical law set.",
+            "The merchant action deliberately undermined reformers because they supported the enacted civic law.",
         )
 
-    assert court.get_court()["case_count"] == 3
-    assert court.get_open_case_ids(10) == [2, 3]
+    assert court.get_court()["case_count"] == 4
+    assert court.get_open_case_ids(10) == [2, 3, 4]
 
 
 def test_expired_controller_cannot_file_brief_appeal_or_respond(
