@@ -24,6 +24,7 @@ exactly one sanction in accepted state.
 - [Deploy AutonomousRepublic V5](https://explorer-studio.genlayer.com/tx/0x4f6185d69d6474d9a45c28e923528f9d2358f26b3b52f61842fada86e789a264)
 - [Deploy RepublicCourt V2](https://explorer-studio.genlayer.com/tx/0xc4ab3bffdc59c9b33b78cfe75fb7dce9eba52b617db2f8602cc2e11038ce1b23)
 - [Link the V5 republic to the V2 court](https://explorer-studio.genlayer.com/tx/0xa2ffac7f8af6260c9833facc18f174a37478369bc109d8eb896c04dd872b282a)
+- [Production keeper advances the new republic](https://explorer-studio.genlayer.com/tx/0x83b0849a0e9732ed67193fd2cc826afb5b2234a1feaa92772bd4480ce0f06a58) — `FINALIZED`, `MAJORITY_AGREE`; accepted readback moved from round 1 to round 2.
 - [Secret-free deployment and source-hash record](deployments/studionet-2026-09-27T10-54-49.501Z.json)
 
 ### Reviewer wallet-flow verification — September 22, 2026
