@@ -236,8 +236,8 @@ def test_initializes_an_ai_controlled_republic(direct_vm, direct_deploy):
     game = contract.get_game()
     factions = json.loads(contract.get_factions_json())
 
-    assert game["contract_version"] == "1.1.0"
-    assert game["policy_version"] == "LOOPHOLE_AUTONOMOUS_REPUBLIC_V5"
+    assert game["contract_version"] == "1.2.0"
+    assert game["policy_version"] == "LOOPHOLE_AUTONOMOUS_REPUBLIC_V6"
     assert game["round_number"] == 1
     assert game["phase"] == "COMMIT"
     assert game["stability"] == 10
@@ -300,12 +300,15 @@ def test_expired_temporary_wallet_control_can_be_recovered_by_a_new_wallet(
     claimed = contract.get_faction("MERCHANTS")
     assert claimed["controller_mode"] == "HUMAN"
     assert claimed["control_recoverable"] is False
+    assert contract.is_active_faction_controller("MERCHANTS", claimed["controller"]) is True
+    assert contract.is_active_faction_controller("MERCHANTS", Address(direct_bob)) is False
 
     direct_vm.warp(as_iso(claimed["control_expires_at"]))
     expired = contract.get_faction("MERCHANTS")
     assert expired["controller_mode"] == "AI"
     assert expired["control_recoverable"] is True
     assert contract.get_controlled_faction(claimed["controller"]) == ""
+    assert contract.is_active_faction_controller("MERCHANTS", claimed["controller"]) is False
 
     # Claiming with a fresh temporary wallet atomically clears the abandoned
     # lease, so closing the original browser tab cannot orphan the faction.
@@ -718,7 +721,7 @@ def test_only_configured_court_can_apply_a_bounded_idempotent_ruling(
     assert contract.get_game()["court_ruling_count"] == 1
     assert ruling["legitimacy_after"] == 2
     assert ruling["action_round"] == 3
-    assert contract.is_court_action_sanctioned(3, "MERCHANTS", digest) is True
+    assert contract.is_court_action_sanctioned(3, "MERCHANTS") is True
 
     with direct_vm.expect_revert("COURT_RULING_CONFLICT"):
         contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", "b" * 64)

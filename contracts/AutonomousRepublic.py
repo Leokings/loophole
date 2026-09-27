@@ -11,8 +11,8 @@ import datetime
 import json
 
 
-CONTRACT_VERSION = "1.1.0"
-POLICY_VERSION = "LOOPHOLE_AUTONOMOUS_REPUBLIC_V5"
+CONTRACT_VERSION = "1.2.0"
+POLICY_VERSION = "LOOPHOLE_AUTONOMOUS_REPUBLIC_V6"
 DIGEST_DOMAIN = "LOOPHOLE_AUTONOMOUS_REPUBLIC"
 
 SOURCE_HUMAN = "HUMAN"
@@ -1729,6 +1729,20 @@ class AutonomousRepublic(gl.Contract):
         return "" if self._control_is_expired(faction) else faction_id
 
     @gl.public.view
+    def is_active_faction_controller(self, faction_id: str, controller: Address) -> bool:
+        """Return whether ``controller`` currently holds an unexpired faction lease.
+
+        Cross-contract callers must use this authority check instead of trusting
+        the stored controller address returned for a recoverable expired seat.
+        """
+        faction = self._require_faction(faction_id)
+        return (
+            controller != ZERO_ADDRESS
+            and faction.controller == controller
+            and not self._control_is_expired(faction)
+        )
+
+    @gl.public.view
     def preview_action_commitment(
         self,
         faction_id: str,
@@ -2067,17 +2081,12 @@ class AutonomousRepublic(gl.Contract):
         self,
         action_round: int,
         defendant_faction_id: str,
-        ruling_digest: str,
     ) -> bool:
         if isinstance(action_round, bool) or not isinstance(action_round, int) or action_round < 1:
             _expected("COURT_ACTION_ROUND")
         faction = self._require_faction(defendant_faction_id)
-        canonical_digest = _canonical_digest(ruling_digest, "COURT_RULING_DIGEST")
         action_key = _action_key(action_round, faction.faction_id)
-        return (
-            action_key in self.court_action_ruling_digests
-            and self.court_action_ruling_digests[action_key] == canonical_digest
-        )
+        return action_key in self.court_action_ruling_digests
 
     @gl.public.write
     def set_court_address(self, court_address: Address) -> None:

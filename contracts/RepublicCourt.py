@@ -11,8 +11,8 @@ import datetime
 import json
 
 
-CONTRACT_VERSION = "0.2.0"
-POLICY_VERSION = "LOOPHOLE_REPUBLIC_COURT_V2"
+CONTRACT_VERSION = "0.3.0"
+POLICY_VERSION = "LOOPHOLE_REPUBLIC_COURT_V3"
 DIGEST_DOMAIN = "LOOPHOLE_REPUBLIC_COURT"
 
 STATUS_BRIEFING = "BRIEFING"
@@ -96,6 +96,7 @@ class CourtCase:
     finalized_at: u256
     action_key: str
     sanction_dispatch_count: u256
+    claim_key: str
 
 
 @allow_storage
@@ -439,7 +440,7 @@ class RepublicCourt(gl.Contract):
     cases: TreeMap[u256, CourtCase]
     case_by_reference: TreeMap[str, u256]
     precedents: TreeMap[u256, Precedent]
-    case_by_action: TreeMap[str, u256]
+    case_by_claim: TreeMap[str, u256]
     open_case_count: u256
     open_case_head: u256
     open_case_tail: u256
@@ -488,6 +489,30 @@ class RepublicCourt(gl.Contract):
             ],
         )
 
+    def _claim_key(
+        self,
+        action_round: int,
+        defendant_faction_id: str,
+        plaintiff_faction_id: str,
+        cited_law_ids_json: str,
+    ) -> str:
+        """Deduplicate one legal theory without immunizing the action itself.
+
+        Separate plaintiffs and distinct canonical law sets remain independently
+        reviewable. Numeric sanctions are still idempotent at action level in the
+        republic, so multiple valid claims cannot multiply the penalty.
+        """
+        return _digest(
+            "LEGAL_CLAIM",
+            [
+                _address_text(self.republic_address),
+                str(action_round),
+                defendant_faction_id,
+                plaintiff_faction_id,
+                cited_law_ids_json,
+            ],
+        )
+
     def _enqueue_open_case(self, case_id: int) -> None:
         if case_id in self.open_case_members and self.open_case_members[case_id]:
             _expected("CASE_ALREADY_QUEUED")
@@ -528,9 +553,17 @@ class RepublicCourt(gl.Contract):
         return gl.get_contract_at(self.republic_address).view()
 
     def _require_faction_controller(self, faction_id: str) -> dict:
-        faction = self._republic_view().get_faction(faction_id)
+        republic = self._republic_view()
+        faction = republic.get_faction(faction_id)
         if not isinstance(faction, dict) or faction.get("controller") != gl.message.sender_address:
             _expected("FACTION_CONTROLLER_ONLY")
+        if not bool(
+            republic.is_active_faction_controller(
+                faction_id,
+                gl.message.sender_address,
+            )
+        ):
+            _expected("FACTION_CONTROL_EXPIRED")
         return faction
 
     def _recent_precedents(self) -> list[dict]:
@@ -586,7 +619,6 @@ class RepublicCourt(gl.Contract):
             self._republic_view().is_court_action_sanctioned(
                 int(case.action_round),
                 case.defendant_faction_id,
-                case.ruling_digest,
             )
         )
 
@@ -643,7 +675,7 @@ class RepublicCourt(gl.Contract):
         self.cases[case.case_id] = case
         self.finalized_case_count += 1
 
-        if case.verdict == VERDICT_VIOLATION:
+        if case.verdict == VERDICT_VIOLATION and not self._sanction_is_applied(case):
             self._dispatch_sanction(case)
 
     @gl.public.view
@@ -662,6 +694,8 @@ class RepublicCourt(gl.Contract):
             "open_case_tail": self.open_case_tail,
             "precedent_count": self.precedent_count,
             "max_case_age_rounds": MAX_CASE_AGE_ROUNDS,
+            "claim_deduplication": "ACTION_PLAINTIFF_LAWS",
+            "sanction_deduplication": "ACTION",
         }
 
     @gl.public.view
@@ -702,6 +736,7 @@ class RepublicCourt(gl.Contract):
             "precedent_id": case.precedent_id,
             "finalized_at": case.finalized_at,
             "action_key": case.action_key,
+            "claim_key": case.claim_key,
             "sanction_dispatch_count": case.sanction_dispatch_count,
             "sanction_applied": sanction_applied,
         }
@@ -774,18 +809,22 @@ class RepublicCourt(gl.Contract):
             _expected("ACTION_ROUND_NOT_RESOLVED")
         if int(game["round_number"]) - action_round > MAX_CASE_AGE_ROUNDS:
             _expected("CASE_FILING_WINDOW_CLOSED")
-        plaintiff = republic.get_faction(plaintiff_id)
+        plaintiff = self._require_faction_controller(plaintiff_id)
         defendant = republic.get_faction(defendant_id)
-        if not isinstance(plaintiff, dict) or plaintiff.get("controller") != gl.message.sender_address:
-            _expected("PLAINTIFF_CONTROLLER_ONLY")
         if not isinstance(defendant, dict):
             _expected("DEFENDANT_FACTION")
         action = republic.get_round_action(action_round, defendant_id)
         if not isinstance(action, dict) or action.get("faction_id") != defendant_id:
             _expected("CASE_ACTION")
         action_key = self._action_key(action_round, defendant_id)
-        if action_key in self.case_by_action:
-            _expected("CASE_ACTION_DUPLICATE")
+        claim_key = self._claim_key(
+            action_round,
+            defendant_id,
+            plaintiff_id,
+            canonical_law_ids_json,
+        )
+        if claim_key in self.case_by_claim:
+            _expected("CASE_CLAIM_DUPLICATE")
 
         laws: list[dict] = []
         for law_id in cited_law_ids:
@@ -884,9 +923,10 @@ class RepublicCourt(gl.Contract):
             finalized_at=u256(0),
             action_key=action_key,
             sanction_dispatch_count=u256(0),
+            claim_key=claim_key,
         )
         self.case_by_reference[canonical_reference] = case_id
-        self.case_by_action[action_key] = case_id
+        self.case_by_claim[claim_key] = case_id
         self._enqueue_open_case(int(case_id))
         return int(case_id)
 

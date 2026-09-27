@@ -19,7 +19,7 @@ export const demoSnapshot: RepublicSnapshot = {
     objective_commit_end_round: 2,
     objective_reveal_deadline: 0,
     phase: "COMMIT",
-    policy_version: "LOOPHOLE_AUTONOMOUS_REPUBLIC_V5",
+    policy_version: "LOOPHOLE_AUTONOMOUS_REPUBLIC_V6",
     republic_id: "FIRST-REPUBLIC",
     reveal_deadline: now + 6720,
     round_number: 6,

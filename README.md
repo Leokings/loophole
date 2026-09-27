@@ -2,30 +2,34 @@
 
 Loophole is a population-independent political strategy game built natively on GenLayer. A republic keeps moving even when nobody is online: human players may claim faction seats and use private commit/reveal turns, while the Intelligent Contract supplies consensus-validated actions for every empty or timed-out seat.
 
-The live game is available at [loophole-zeta.vercel.app](https://loophole-zeta.vercel.app). It reads the gasless StudioNet republic at `0x7A0E986FBe26d53c25E0c042de4f3c39a8753bCF` and court at `0xb30a10793D876Df44bb9914D63eE7ADb063f41f0`; a Cloudflare trigger wakes the Vercel keeper every five minutes. StudioNet is temporary and may reset, so the deployment artifact and release scripts are designed to roll forward to a replacement pair.
+The live game is available at [loophole-zeta.vercel.app](https://loophole-zeta.vercel.app). It reads the gasless StudioNet republic at `0xC075b19FbeC7B328C2F264B0374eD6b1F977E7Ea` and court at `0x28f5AB33C7a881011FDf6D8399dE9c31f4Eb97A2`; a Cloudflare trigger wakes the Vercel keeper every five minutes. StudioNet is temporary and may reset, so the deployment artifact and release scripts are designed to roll forward to a replacement pair.
 
-### State-integrity and liveness release — September 27, 2026
+### Authority-integrity release — September 27, 2026
 
-This release closes the reviewer-reported duplicate-litigation, backlog,
-callback, and temporary-wallet failure modes:
+This release closes the reviewer-reported first-filer and expired-controller
+authority gaps while retaining the earlier liveness and recovery protections:
 
-- A resolved faction action can be litigated only once, regardless of the caller-supplied case reference, and filings close after eight republic rounds.
+- Court V3 deduplicates one legal claim by action, plaintiff, and canonical cited-law set. A weak or `NO_VIOLATION` filing therefore cannot block another plaintiff or a distinct legal theory against the same action.
+- Republic V6 still applies at most one numeric sanction to the underlying faction action. A later valid claim can create precedent, but it cannot multiply the penalty.
+- The republic now exposes `is_active_faction_controller`; filing, briefs, appeals, and appeal responses all require this authoritative lease check. A recoverable expired seat's stale stored address grants no court authority.
+- Filings close after eight republic rounds.
 - The keeper reads an explicit oldest-first open-case queue, so a growing case count cannot hide an unresolved early case.
 - A finalized `VIOLATION` exposes a permissionless `recover_sanction` replay. The republic deduplicates sanctions by underlying action as well as case ID, so retries cannot double-penalize a faction.
 - Human faction control is a renewable bounded lease. If a temporary browser wallet disappears, the expired seat becomes recoverable instead of remaining orphaned forever.
 - Action and objective nonces are saved before polling. An RPC timeout or incomplete receipt preserves the secret and offers a finality retry; only a definitive finalized failure deletes it.
 
-The deployed sources, V5/V2 policy versions, schemas, queue readback, and
-cross-links are independently rechecked by `npm run verify:deployment`. The
-five-validator integration test also forces the original callback failure,
-confirms the republic remains unchanged, then replays the callback and verifies
-exactly one sanction in accepted state.
+The deployed V6/V3 sources, schemas, authority markers, queue readback, and
+cross-links are independently rechecked by `npm run verify:deployment`. Forty-one
+direct tests cover first-filer resistance, action-level sanction idempotence,
+expired-controller rejection across every party write, and the existing game
+state transitions. The five-validator integration still forces the original
+callback failure, confirms the republic remains unchanged, then replays it and
+verifies exactly one sanction in accepted state.
 
-- [Deploy AutonomousRepublic V5](https://explorer-studio.genlayer.com/tx/0x4f6185d69d6474d9a45c28e923528f9d2358f26b3b52f61842fada86e789a264)
-- [Deploy RepublicCourt V2](https://explorer-studio.genlayer.com/tx/0xc4ab3bffdc59c9b33b78cfe75fb7dce9eba52b617db2f8602cc2e11038ce1b23)
-- [Link the V5 republic to the V2 court](https://explorer-studio.genlayer.com/tx/0xa2ffac7f8af6260c9833facc18f174a37478369bc109d8eb896c04dd872b282a)
-- [Production keeper advances the new republic](https://explorer-studio.genlayer.com/tx/0x83b0849a0e9732ed67193fd2cc826afb5b2234a1feaa92772bd4480ce0f06a58) — `FINALIZED`, `MAJORITY_AGREE`; accepted readback moved from round 1 to round 2.
-- [Secret-free deployment and source-hash record](deployments/studionet-2026-09-27T10-54-49.501Z.json)
+- [Deploy AutonomousRepublic V6](https://explorer-studio.genlayer.com/tx/0x3fa14b48943f8e3f2ffa756b576bab872af2abd777537f4dc97b56dceb9b074b)
+- [Deploy RepublicCourt V3](https://explorer-studio.genlayer.com/tx/0x672a73830319221852fddb9e15e75a1587fb62c0aec237b52c0ca87df64d80fb)
+- [Link the V6 republic to the V3 court](https://explorer-studio.genlayer.com/tx/0xb76c2626639a8aab1a3c9ebb37797657c042195a48467ce9ee3f0327a72db570)
+- [Secret-free deployment and source-hash record](deployments/studionet-2026-09-27T15-48-18.293Z.json)
 
 ### Reviewer wallet-flow verification — September 22, 2026
 
@@ -86,7 +90,7 @@ This is the complete game foundation, not a throwaway MVP. It includes the auton
 - Executive, Speaker, and Treasurer offices with recurring elections and deterministic powers.
 - Consensus-generated crises, independently audited response scores, and deterministic rewards or penalties.
 - Eight-to-thirty-round seasons, public event scoring, secret objective commit/reveal, winners, and persistent lifetime points.
-- A separate `RepublicCourt` that freezes evidence from republic state, bounds filing age, deduplicates by underlying action, maintains an oldest-first open queue, handles appeals and precedent, and supports idempotent sanction recovery.
+- A separate `RepublicCourt` that freezes evidence from republic state, bounds filing age, deduplicates action/plaintiff/law claims without first-filer immunity, enforces live faction leases, maintains an oldest-first open queue, handles appeals and precedent, and supports action-idempotent sanction recovery.
 - A responsive Next.js game client with a polished demo world when no contract address is configured.
 - A protected Vercel keeper endpoint plus a five-minute Cloudflare scheduler that advances ready republic phases and court deadlines without making any game decision.
 - Direct tests plus a five-validator, two-contract GLSim integration scenario.

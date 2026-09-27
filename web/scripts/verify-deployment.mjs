@@ -55,16 +55,18 @@ async function main() {
   const game = asRecord(gameValue, "get_game");
   const courtState = asRecord(courtValue, "get_court");
   if (
-    game.contract_version !== "1.1.0"
-    || game.policy_version !== "LOOPHOLE_AUTONOMOUS_REPUBLIC_V5"
+    game.contract_version !== "1.2.0"
+    || game.policy_version !== "LOOPHOLE_AUTONOMOUS_REPUBLIC_V6"
     || Number(game.control_lease_seconds) < 1
   ) {
     throw new Error("AutonomousRepublic does not expose the expected control-recovery release state");
   }
   if (
-    courtState.contract_version !== "0.2.0"
-    || courtState.policy_version !== "LOOPHOLE_REPUBLIC_COURT_V2"
+    courtState.contract_version !== "0.3.0"
+    || courtState.policy_version !== "LOOPHOLE_REPUBLIC_COURT_V3"
     || Number(courtState.max_case_age_rounds) !== 8
+    || courtState.claim_deduplication !== "ACTION_PLAINTIFF_LAWS"
+    || courtState.sanction_deduplication !== "ACTION"
   ) {
     throw new Error("RepublicCourt does not expose the expected integrity release state");
   }

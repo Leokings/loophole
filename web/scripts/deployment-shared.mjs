@@ -67,6 +67,7 @@ export const expectedMethods = {
     "get_round_action",
     "get_round_summary",
     "get_season_summary",
+    "is_active_faction_controller",
     "is_court_action_sanctioned",
     "preview_action_commitment",
     "preview_objective_commitment",

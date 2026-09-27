@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-27T15:48:18.293Z",
+  "stage": "studionet",
+  "network": "studionet",
+  "chainId": 61999,
+  "rpcUrl": "https://studio.genlayer.com/api",
+  "deployer": "0x147420da479d152375c530f5ed6c9125e3b34334",
+  "republic": {
+    "address": "0xC075b19FbeC7B328C2F264B0374eD6b1F977E7Ea",
+    "constructor": {
+      "republicId": "LOOPHOLE-STUDIONET-WORLD-1",
+      "factionIds": [
+        "MERCHANTS",
+        "REFORMERS",
+        "TRADITIONALISTS",
+        "REVOLUTIONARIES"
+      ],
+      "commitSeconds": 300,
+      "revealSeconds": 300,
+      "seasonRounds": 12
+    },
+    "sourceSha256": "5970a16c64d4efa686a46246282e4c4072deb684b6d5f1aafedbcc9436174a52",
+    "transactionHash": "0x3fa14b48943f8e3f2ffa756b576bab872af2abd777537f4dc97b56dceb9b074b"
+  },
+  "court": {
+    "address": "0x28f5AB33C7a881011FDf6D8399dE9c31f4Eb97A2",
+    "constructor": {
+      "appealSeconds": 600,
+      "briefSeconds": 600,
+      "republicAddress": "0xC075b19FbeC7B328C2F264B0374eD6b1F977E7Ea"
+    },
+    "sourceSha256": "34a58d823785fe9e21b7cdf801d1f3644ad5c60b20ce8ebf3ae8868d353bc511",
+    "transactionHash": "0x672a73830319221852fddb9e15e75a1587fb62c0aec237b52c0ca87df64d80fb"
+  },
+  "linkTransactionHash": "0xb76c2626639a8aab1a3c9ebb37797657c042195a48467ce9ee3f0327a72db570",
+  "frontendEnvironment": {
+    "NEXT_PUBLIC_COURT_ADDRESS": "0x28f5AB33C7a881011FDf6D8399dE9c31f4Eb97A2",
+    "NEXT_PUBLIC_GENLAYER_NETWORK": "studionet",
+    "NEXT_PUBLIC_GENLAYER_RPC_URL": "https://studio.genlayer.com/api",
+    "NEXT_PUBLIC_REPUBLIC_ADDRESS": "0xC075b19FbeC7B328C2F264B0374eD6b1F977E7Ea"
+  },
+  "keeperEnvironment": {
+    "LOOPHOLE_COURT_ADDRESSES": "0x28f5AB33C7a881011FDf6D8399dE9c31f4Eb97A2",
+    "LOOPHOLE_REPUBLIC_ADDRESSES": "0xC075b19FbeC7B328C2F264B0374eD6b1F977E7Ea"
+  },
+  "repositorySourceSha256": "d1394972904e9142b3aab94127ea7e35b12a77fb04e95e2cf8923c32e2b30dc0"
+}
