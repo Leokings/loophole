@@ -2,7 +2,29 @@
 
 Loophole is a population-independent political strategy game built natively on GenLayer. A republic keeps moving even when nobody is online: human players may claim faction seats and use private commit/reveal turns, while the Intelligent Contract supplies consensus-validated actions for every empty or timed-out seat.
 
-The live game is available at [loophole-zeta.vercel.app](https://loophole-zeta.vercel.app). It reads the gasless StudioNet republic at `0x6ECdc692BE72c75a3CD15197c32D61dbd61660D8` and court at `0x315fD6524eB1eb85c907F45FA4d24A896FCF40b2`; a Cloudflare trigger wakes the Vercel keeper every five minutes. StudioNet is temporary and may reset, so the deployment artifact and release scripts are designed to roll forward to a replacement pair.
+The live game is available at [loophole-zeta.vercel.app](https://loophole-zeta.vercel.app). It reads the gasless StudioNet republic at `0x7A0E986FBe26d53c25E0c042de4f3c39a8753bCF` and court at `0xb30a10793D876Df44bb9914D63eE7ADb063f41f0`; a Cloudflare trigger wakes the Vercel keeper every five minutes. StudioNet is temporary and may reset, so the deployment artifact and release scripts are designed to roll forward to a replacement pair.
+
+### State-integrity and liveness release — September 27, 2026
+
+This release closes the reviewer-reported duplicate-litigation, backlog,
+callback, and temporary-wallet failure modes:
+
+- A resolved faction action can be litigated only once, regardless of the caller-supplied case reference, and filings close after eight republic rounds.
+- The keeper reads an explicit oldest-first open-case queue, so a growing case count cannot hide an unresolved early case.
+- A finalized `VIOLATION` exposes a permissionless `recover_sanction` replay. The republic deduplicates sanctions by underlying action as well as case ID, so retries cannot double-penalize a faction.
+- Human faction control is a renewable bounded lease. If a temporary browser wallet disappears, the expired seat becomes recoverable instead of remaining orphaned forever.
+- Action and objective nonces are saved before polling. An RPC timeout or incomplete receipt preserves the secret and offers a finality retry; only a definitive finalized failure deletes it.
+
+The deployed sources, V5/V2 policy versions, schemas, queue readback, and
+cross-links are independently rechecked by `npm run verify:deployment`. The
+five-validator integration test also forces the original callback failure,
+confirms the republic remains unchanged, then replays the callback and verifies
+exactly one sanction in accepted state.
+
+- [Deploy AutonomousRepublic V5](https://explorer-studio.genlayer.com/tx/0x4f6185d69d6474d9a45c28e923528f9d2358f26b3b52f61842fada86e789a264)
+- [Deploy RepublicCourt V2](https://explorer-studio.genlayer.com/tx/0xc4ab3bffdc59c9b33b78cfe75fb7dce9eba52b617db2f8602cc2e11038ce1b23)
+- [Link the V5 republic to the V2 court](https://explorer-studio.genlayer.com/tx/0xa2ffac7f8af6260c9833facc18f174a37478369bc109d8eb896c04dd872b282a)
+- [Secret-free deployment and source-hash record](deployments/studionet-2026-09-27T10-54-49.501Z.json)
 
 ### Reviewer wallet-flow verification — September 22, 2026
 
@@ -25,7 +47,7 @@ released afterward and is autonomous again.
 - [Reveal the round-135 human action](https://explorer-studio.genlayer.com/tx/0x5b3d51bd5b7a45fedf212deda70c0073e755462899ee5b5edff1f6475dfd4b21)
 - [Release Civic Reformers back to consensus AI](https://explorer-studio.genlayer.com/tx/0x8990f24e8a3f89a93f3e7762bcfa19b4a54c4b6008593d0b882580bf432cf357)
 
-### Finalized two-wallet production proof
+### Historical two-wallet product-flow proof (previous deployment)
 
 The current pair was deployed from the repository source, linked in both
 directions, and source/schema verified. Two test wallets then claimed distinct
@@ -56,14 +78,14 @@ This is the complete game foundation, not a throwaway MVP. It includes the auton
 
 ## What is live in the codebase
 
-- Three to eight persistent factions with human claim/release and AI continuity.
+- Three to eight persistent factions with renewable human-control leases, permissionless recovery, and AI continuity.
 - Commit/reveal human turns that do not expose an action before everyone is bound.
 - Thirteen bounded actions covering resources, rivalry, legislation, charters, amendments, repeal, elections, vetoes, and crisis response.
 - Statutes and charters with voting thresholds, historical effective ranges, veto windows, supersession, and repeal.
 - Executive, Speaker, and Treasurer offices with recurring elections and deterministic powers.
 - Consensus-generated crises, independently audited response scores, and deterministic rewards or penalties.
 - Eight-to-thirty-round seasons, public event scoring, secret objective commit/reveal, winners, and persistent lifetime points.
-- A separate `RepublicCourt` that freezes evidence from republic state, accepts party briefs, reaches consensus rulings, handles appeals, creates precedent, and calls sanctions back to the republic.
+- A separate `RepublicCourt` that freezes evidence from republic state, bounds filing age, deduplicates by underlying action, maintains an oldest-first open queue, handles appeals and precedent, and supports idempotent sanction recovery.
 - A responsive Next.js game client with a polished demo world when no contract address is configured.
 - A protected Vercel keeper endpoint plus a five-minute Cloudflare scheduler that advances ready republic phases and court deadlines without making any game decision.
 - Direct tests plus a five-validator, two-contract GLSim integration scenario.
@@ -125,7 +147,7 @@ cd ..
 python scripts/verify.py --integration
 ```
 
-That command runs GenVM lint and type checking for both contracts, 34 direct tests, the five-validator GLSim integration test, frontend lint/type/tests and a production Next.js build, plus scheduler type/tests and a dry-run Worker bundle.
+That command runs GenVM lint and type checking for both contracts, 39 direct tests, the five-validator GLSim integration test, frontend lint/type/tests and a production Next.js build, plus scheduler type/tests and a dry-run Worker bundle.
 
 ## Deploy
 

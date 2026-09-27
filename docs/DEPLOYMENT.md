@@ -17,7 +17,7 @@ cd ..
 python scripts/verify.py --integration
 ```
 
-The integration scenario runs five validators through both contracts, including autonomous rounds, charter enactment, an election, a crisis, evidence capture, a consensus court ruling, and the asynchronous sanction callback.
+The integration scenario runs five validators through both contracts, including autonomous rounds, charter enactment, an election, a crisis, evidence capture, and a consensus court ruling. It intentionally lets the asynchronous sanction callback fail, proves court/republic state divergence, then exercises the permissionless recovery path and verifies exactly one accepted sanction.
 
 ## 2. Prepare a dedicated deployer
 
@@ -140,6 +140,8 @@ On a short-window StudioNet deployment:
 4. Confirm the human action source is `HUMAN`, empty seats are `AI_EMPTY_SEAT`, and the round advanced.
 5. Let one claimed controller miss a later reveal and confirm its source becomes `AI_TIMEOUT`.
 6. Exercise a law vote, case filing, court resolution, and finalized callback before treating the public release as ready.
+7. Confirm a second reference cannot file the same faction action, an action older than eight rounds is rejected, and `get_open_case_ids` continues to return the oldest unresolved case.
+8. If a finalized violation reports `sanction_applied: false`, call `recover_sanction` and confirm accepted republic readback before retrying it as an idempotent no-op.
 
 ## Roll forward, not in place
 

@@ -45,14 +45,35 @@ async function main() {
     readSource("contracts/AutonomousRepublic.py"),
     readSource("contracts/RepublicCourt.py"),
   ]);
-  const [republic, court, gameValue, courtValue] = await Promise.all([
+  const [republic, court, gameValue, courtValue, openCaseIdsValue] = await Promise.all([
     verifySourceAndSchema(client, republicAddress, republicSource, expectedMethods.republic, "AutonomousRepublic"),
     verifySourceAndSchema(client, courtAddress, courtSource, expectedMethods.court, "RepublicCourt"),
     client.readContract({ address: republicAddress, functionName: "get_game", jsonSafeReturn: true }),
     client.readContract({ address: courtAddress, functionName: "get_court", jsonSafeReturn: true }),
+    client.readContract({ address: courtAddress, functionName: "get_open_case_ids", args: [64], jsonSafeReturn: true }),
   ]);
   const game = asRecord(gameValue, "get_game");
   const courtState = asRecord(courtValue, "get_court");
+  if (
+    game.contract_version !== "1.1.0"
+    || game.policy_version !== "LOOPHOLE_AUTONOMOUS_REPUBLIC_V5"
+    || Number(game.control_lease_seconds) < 1
+  ) {
+    throw new Error("AutonomousRepublic does not expose the expected control-recovery release state");
+  }
+  if (
+    courtState.contract_version !== "0.2.0"
+    || courtState.policy_version !== "LOOPHOLE_REPUBLIC_COURT_V2"
+    || Number(courtState.max_case_age_rounds) !== 8
+  ) {
+    throw new Error("RepublicCourt does not expose the expected integrity release state");
+  }
+  if (
+    !Array.isArray(openCaseIdsValue)
+    || openCaseIdsValue.length !== Math.min(Number(courtState.open_case_count), 64)
+  ) {
+    throw new Error("RepublicCourt open-case queue readback is inconsistent");
+  }
   if (!sameAddress(address(game.court_address, "get_game.court_address"), courtAddress)) {
     throw new Error("AutonomousRepublic court link does not match the artifact");
   }
@@ -64,9 +85,24 @@ async function main() {
     ok: true,
     artifactPath,
     chainId: stage.chainId,
-    court: { address: courtAddress, sourceSha256: court.sourceSha256 },
+    court: {
+      address: courtAddress,
+      contractVersion: courtState.contract_version,
+      maxCaseAgeRounds: courtState.max_case_age_rounds,
+      openCaseCount: courtState.open_case_count,
+      openCaseIds: openCaseIdsValue,
+      policyVersion: courtState.policy_version,
+      sourceSha256: court.sourceSha256,
+    },
     network: stage.network,
-    republic: { address: republicAddress, round: game.round_number, sourceSha256: republic.sourceSha256 },
+    republic: {
+      address: republicAddress,
+      contractVersion: game.contract_version,
+      controlLeaseSeconds: game.control_lease_seconds,
+      policyVersion: game.policy_version,
+      round: game.round_number,
+      sourceSha256: republic.sourceSha256,
+    },
   }, null, 2));
 }
 

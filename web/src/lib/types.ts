@@ -7,6 +7,8 @@ export type Phase =
   | "SEASON_FINAL";
 
 export type Faction = {
+  control_expires_at: number;
+  control_recoverable: boolean;
   controller: string;
   controller_mode: "AI" | "HUMAN";
   crises_resolved: number;
@@ -75,6 +77,7 @@ export type Crisis = {
 export type GameState = {
   active_crisis_id: number;
   commit_deadline: number;
+  control_lease_seconds: number;
   court_configured: boolean;
   court_ruling_count: number;
   crisis_count: number;
@@ -123,6 +126,7 @@ export type RoundAction = RoundSummary["actions"][number] & {
 };
 
 export type CourtCase = {
+  action_round: number;
   appeal_deadline: number;
   appeal_response_deadline: number;
   brief_deadline: number;
@@ -134,6 +138,8 @@ export type CourtCase = {
   precedent_rule: string;
   reasoning: string;
   sanction: string;
+  sanction_applied: boolean;
+  sanction_dispatch_count: number;
   status: string;
   verdict: string;
 };
@@ -152,7 +158,10 @@ export type Objective = {
 export type CourtState = {
   case_count: number;
   finalized_case_count: number;
+  max_case_age_rounds: number;
   open_case_count: number;
+  open_case_head: number;
+  open_case_tail: number;
   precedent_count: number;
 };
 

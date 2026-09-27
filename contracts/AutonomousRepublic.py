@@ -11,8 +11,8 @@ import datetime
 import json
 
 
-CONTRACT_VERSION = "1.0.0"
-POLICY_VERSION = "LOOPHOLE_AUTONOMOUS_REPUBLIC_V4"
+CONTRACT_VERSION = "1.1.0"
+POLICY_VERSION = "LOOPHOLE_AUTONOMOUS_REPUBLIC_V5"
 DIGEST_DOMAIN = "LOOPHOLE_AUTONOMOUS_REPUBLIC"
 
 SOURCE_HUMAN = "HUMAN"
@@ -92,6 +92,8 @@ MAX_CRISIS_TITLE_CHARS = 100
 MAX_CRISIS_DESCRIPTION_CHARS = 900
 MAX_CRISIS_STANDARD_CHARS = 500
 MAX_CRISIS_RESPONSE_CHARS = MAX_RATIONALE_CHARS
+MIN_CONTROL_LEASE_SECONDS = 24 * 60 * 60
+MAX_CONTROL_LEASE_SECONDS = 14 * 24 * 60 * 60
 
 MIN_SEASON_ROUNDS = 8
 MAX_SEASON_ROUNDS = 30
@@ -872,6 +874,10 @@ class AutonomousRepublic(gl.Contract):
     crises: TreeMap[u256, Crisis]
     crisis_responses: TreeMap[str, str]
     crisis_response_scores: TreeMap[str, u256]
+    control_lease_seconds: u256
+    faction_control_expires_at: TreeMap[str, u256]
+    court_action_ruling_digests: TreeMap[str, str]
+    court_action_case_ids: TreeMap[str, u256]
 
     def __init__(
         self,
@@ -938,6 +944,12 @@ class AutonomousRepublic(gl.Contract):
         self.season_winners_json = "[]"
         self.crisis_count = u256(0)
         self.active_crisis_id = u256(0)
+        self.control_lease_seconds = u256(
+            min(
+                MAX_CONTROL_LEASE_SECONDS,
+                max(MIN_CONTROL_LEASE_SECONDS, commit_seconds + reveal_seconds),
+            )
+        )
 
         for office_index in range(len(_OFFICE_IDS)):
             office_id = _OFFICE_IDS[office_index]
@@ -960,6 +972,35 @@ class AutonomousRepublic(gl.Contract):
         if canonical_id not in self.factions:
             _expected("FACTION_NOT_FOUND")
         return self.factions[canonical_id]
+
+    def _control_expires_at(self, faction_id: str) -> int:
+        if faction_id not in self.faction_control_expires_at:
+            return 0
+        return int(self.faction_control_expires_at[faction_id])
+
+    def _control_is_expired(self, faction: Faction) -> bool:
+        return (
+            faction.controller != ZERO_ADDRESS
+            and _now_epoch() >= self._control_expires_at(faction.faction_id)
+        )
+
+    def _clear_faction_control(self, faction: Faction) -> Faction:
+        if faction.controller != ZERO_ADDRESS:
+            self.controlled_faction_by_address[_address_text(faction.controller)] = ""
+        faction.controller = ZERO_ADDRESS
+        self.faction_control_expires_at[faction.faction_id] = u256(0)
+        self.factions[faction.faction_id] = faction
+        return faction
+
+    def _require_live_controller(self, faction: Faction) -> Faction:
+        if faction.controller != gl.message.sender_address:
+            _expected("FACTION_CONTROLLER_ONLY")
+        if self._control_is_expired(faction):
+            _expected("FACTION_CONTROL_EXPIRED")
+        self.faction_control_expires_at[faction.faction_id] = u256(
+            _now_epoch() + int(self.control_lease_seconds)
+        )
+        return faction
 
     def _require_active_season(self) -> None:
         if self.season_status != SEASON_ACTIVE:
@@ -1049,6 +1090,7 @@ class AutonomousRepublic(gl.Contract):
         for index in range(int(self.faction_count)):
             faction_id = self.faction_ids[index]
             faction = self.factions[faction_id]
+            control_recoverable = self._control_is_expired(faction)
             held_offices: list[str] = []
             for office_index in range(len(_OFFICE_IDS)):
                 office_id = _OFFICE_IDS[office_index]
@@ -1060,7 +1102,8 @@ class AutonomousRepublic(gl.Contract):
                     "faction_id": faction.faction_id,
                     "name": faction.name,
                     "doctrine": faction.doctrine,
-                    "controller_mode": "AI" if faction.controller == ZERO_ADDRESS else "HUMAN",
+                    "controller_mode": "AI" if faction.controller == ZERO_ADDRESS or control_recoverable else "HUMAN",
+                    "control_recoverable": control_recoverable,
                     "influence": int(faction.influence),
                     "wealth": int(faction.wealth),
                     "legitimacy": int(faction.legitimacy),
@@ -1618,6 +1661,7 @@ class AutonomousRepublic(gl.Contract):
             "season_winners_json": self.season_winners_json,
             "active_crisis_id": self.active_crisis_id,
             "crisis_count": self.crisis_count,
+            "control_lease_seconds": self.control_lease_seconds,
             "election_open": _is_election_round(int(self.round_number)),
             "next_election_round": self._next_election_round(),
         }
@@ -1627,13 +1671,16 @@ class AutonomousRepublic(gl.Contract):
         result: list[dict] = []
         for index in range(int(self.faction_count)):
             faction = self.factions[self.faction_ids[index]]
+            control_recoverable = self._control_is_expired(faction)
             result.append(
                 {
                     "faction_id": faction.faction_id,
                     "name": faction.name,
                     "doctrine": faction.doctrine,
                     "controller": _address_text(faction.controller),
-                    "controller_mode": "AI" if faction.controller == ZERO_ADDRESS else "HUMAN",
+                    "controller_mode": "AI" if faction.controller == ZERO_ADDRESS or control_recoverable else "HUMAN",
+                    "control_expires_at": self._control_expires_at(faction.faction_id),
+                    "control_recoverable": control_recoverable,
                     "influence": int(faction.influence),
                     "wealth": int(faction.wealth),
                     "legitimacy": int(faction.legitimacy),
@@ -1650,12 +1697,15 @@ class AutonomousRepublic(gl.Contract):
     @gl.public.view
     def get_faction(self, faction_id: str) -> dict:
         faction = self._require_faction(faction_id)
+        control_recoverable = self._control_is_expired(faction)
         return {
             "faction_id": faction.faction_id,
             "name": faction.name,
             "doctrine": faction.doctrine,
             "controller": faction.controller,
-            "controller_mode": "AI" if faction.controller == ZERO_ADDRESS else "HUMAN",
+            "controller_mode": "AI" if faction.controller == ZERO_ADDRESS or control_recoverable else "HUMAN",
+            "control_expires_at": self._control_expires_at(faction.faction_id),
+            "control_recoverable": control_recoverable,
             "influence": faction.influence,
             "wealth": faction.wealth,
             "legitimacy": faction.legitimacy,
@@ -1672,7 +1722,11 @@ class AutonomousRepublic(gl.Contract):
         key = _address_text(controller)
         if key not in self.controlled_faction_by_address:
             return ""
-        return self.controlled_faction_by_address[key]
+        faction_id = self.controlled_faction_by_address[key]
+        if faction_id == "":
+            return ""
+        faction = self.factions[faction_id]
+        return "" if self._control_is_expired(faction) else faction_id
 
     @gl.public.view
     def preview_action_commitment(
@@ -1690,6 +1744,8 @@ class AutonomousRepublic(gl.Contract):
         faction = self._require_faction(faction_id)
         if faction.controller == ZERO_ADDRESS:
             _expected("FACTION_HAS_NO_CONTROLLER")
+        if self._control_is_expired(faction):
+            _expected("FACTION_CONTROL_EXPIRED")
         action = _canonical_action_values(
             faction.faction_id,
             action_type,
@@ -1849,6 +1905,8 @@ class AutonomousRepublic(gl.Contract):
         faction = self._require_faction(faction_id)
         if faction.controller == ZERO_ADDRESS:
             _expected("FACTION_HAS_NO_CONTROLLER")
+        if self._control_is_expired(faction):
+            _expected("FACTION_CONTROL_EXPIRED")
         objective = self._canonical_objective_values(objective_type, target_faction_id)
         if objective["target_faction_id"] == faction.faction_id:
             _expected("OBJECTIVE_SELF_TARGET")
@@ -1861,8 +1919,7 @@ class AutonomousRepublic(gl.Contract):
         if int(self.round_number) > int(self.objective_commit_end_round):
             _expected("OBJECTIVE_COMMIT_WINDOW_CLOSED")
         faction = self._require_faction(faction_id)
-        if faction.controller != gl.message.sender_address:
-            _expected("FACTION_CONTROLLER_ONLY")
+        faction = self._require_live_controller(faction)
         objective = self.objectives[faction.faction_id]
         if objective.source == OBJECTIVE_SOURCE_SECRET:
             _expected("OBJECTIVE_ALREADY_COMMITTED")
@@ -1889,12 +1946,12 @@ class AutonomousRepublic(gl.Contract):
         if _now_epoch() >= int(self.objective_reveal_deadline):
             _expected("OBJECTIVE_REVEAL_WINDOW_CLOSED")
         faction = self._require_faction(faction_id)
+        self._require_live_controller(faction)
         objective = self.objectives[faction.faction_id]
         if (
             objective.source != OBJECTIVE_SOURCE_SECRET
             or objective.revealed
             or objective.committed_by != gl.message.sender_address
-            or faction.controller != gl.message.sender_address
         ):
             _expected("OBJECTIVE_COMMITTER_ONLY")
         values = self._canonical_objective_values(objective_type, target_faction_id)
@@ -2005,6 +2062,23 @@ class AutonomousRepublic(gl.Contract):
             _expected("COURT_RULING_NOT_FOUND")
         return self.court_rulings_json[case_id]
 
+    @gl.public.view
+    def is_court_action_sanctioned(
+        self,
+        action_round: int,
+        defendant_faction_id: str,
+        ruling_digest: str,
+    ) -> bool:
+        if isinstance(action_round, bool) or not isinstance(action_round, int) or action_round < 1:
+            _expected("COURT_ACTION_ROUND")
+        faction = self._require_faction(defendant_faction_id)
+        canonical_digest = _canonical_digest(ruling_digest, "COURT_RULING_DIGEST")
+        action_key = _action_key(action_round, faction.faction_id)
+        return (
+            action_key in self.court_action_ruling_digests
+            and self.court_action_ruling_digests[action_key] == canonical_digest
+        )
+
     @gl.public.write
     def set_court_address(self, court_address: Address) -> None:
         _no_value()
@@ -2020,6 +2094,7 @@ class AutonomousRepublic(gl.Contract):
     def apply_court_ruling(
         self,
         case_id: int,
+        action_round: int,
         defendant_faction_id: str,
         sanction: str,
         ruling_digest: str,
@@ -2036,6 +2111,8 @@ class AutonomousRepublic(gl.Contract):
             _expected("COURT_ONLY")
         if isinstance(case_id, bool) or not isinstance(case_id, int) or case_id < 1:
             _expected("COURT_CASE_ID")
+        if isinstance(action_round, bool) or not isinstance(action_round, int) or action_round < 1:
+            _expected("COURT_ACTION_ROUND")
         canonical_digest = _canonical_digest(ruling_digest, "COURT_RULING_DIGEST")
         if case_id in self.court_ruling_digests:
             if self.court_ruling_digests[case_id] != canonical_digest:
@@ -2043,6 +2120,14 @@ class AutonomousRepublic(gl.Contract):
             return
 
         faction = self._require_faction(defendant_faction_id)
+        action_key = _action_key(action_round, faction.faction_id)
+        if action_key in self.court_action_ruling_digests:
+            if (
+                self.court_action_ruling_digests[action_key] == canonical_digest
+                and int(self.court_action_case_ids[action_key]) == case_id
+            ):
+                return
+            _expected("COURT_ACTION_ALREADY_SANCTIONED")
         canonical_sanction = _canonical_identifier(sanction, "COURT_SANCTION")
         legitimacy_penalty = 0
         stability_penalty = 0
@@ -2063,9 +2148,13 @@ class AutonomousRepublic(gl.Contract):
         self.factions[faction.faction_id] = faction
         self.stability = u256(max(0, stability_before - stability_penalty))
         self.court_ruling_digests[case_id] = canonical_digest
+        self.court_action_ruling_digests[action_key] = canonical_digest
+        self.court_action_case_ids[action_key] = u256(case_id)
         self.court_rulings_json[case_id] = _canonical_json(
             {
                 "case_id": case_id,
+                "action_round": action_round,
+                "action_key": action_key,
                 "defendant_faction_id": faction.faction_id,
                 "sanction": canonical_sanction,
                 "ruling_digest": canonical_digest,
@@ -2082,15 +2171,25 @@ class AutonomousRepublic(gl.Contract):
         _no_value()
         faction = self._require_faction(faction_id)
         if faction.controller != ZERO_ADDRESS:
-            _expected("FACTION_ALREADY_CONTROLLED")
+            if not self._control_is_expired(faction):
+                _expected("FACTION_ALREADY_CONTROLLED")
+            faction = self._clear_faction_control(faction)
         controller_key = _address_text(gl.message.sender_address)
         if (
             controller_key in self.controlled_faction_by_address
             and self.controlled_faction_by_address[controller_key] != ""
         ):
-            _expected("CONTROLLER_ALREADY_HAS_FACTION")
+            controlled_id = self.controlled_faction_by_address[controller_key]
+            controlled = self.factions[controlled_id]
+            if self._control_is_expired(controlled):
+                self._clear_faction_control(controlled)
+            else:
+                _expected("CONTROLLER_ALREADY_HAS_FACTION")
         faction.controller = gl.message.sender_address
         self.factions[faction.faction_id] = faction
+        self.faction_control_expires_at[faction.faction_id] = u256(
+            _now_epoch() + int(self.control_lease_seconds)
+        )
         self.controlled_faction_by_address[controller_key] = faction.faction_id
 
     @gl.public.write
@@ -2099,10 +2198,18 @@ class AutonomousRepublic(gl.Contract):
         faction = self._require_faction(faction_id)
         if faction.controller != gl.message.sender_address:
             _expected("FACTION_CONTROLLER_ONLY")
-        controller_key = _address_text(gl.message.sender_address)
-        faction.controller = ZERO_ADDRESS
-        self.factions[faction.faction_id] = faction
-        self.controlled_faction_by_address[controller_key] = ""
+        self._clear_faction_control(faction)
+
+    @gl.public.write
+    def recover_abandoned_faction(self, faction_id: str) -> bool:
+        _no_value()
+        faction = self._require_faction(faction_id)
+        if faction.controller == ZERO_ADDRESS:
+            return False
+        if not self._control_is_expired(faction):
+            _expected("FACTION_CONTROL_ACTIVE")
+        self._clear_faction_control(faction)
+        return True
 
     @gl.public.write
     def commit_action(self, faction_id: str, commitment: str) -> None:
@@ -2111,8 +2218,7 @@ class AutonomousRepublic(gl.Contract):
         if _now_epoch() >= int(self.commit_deadline):
             _expected("COMMIT_PHASE_CLOSED")
         faction = self._require_faction(faction_id)
-        if faction.controller != gl.message.sender_address:
-            _expected("FACTION_CONTROLLER_ONLY")
+        faction = self._require_live_controller(faction)
         canonical_commitment = _canonical_digest(commitment, "ACTION_COMMITMENT")
         key = _action_key(int(self.round_number), faction.faction_id)
         if key in self.round_actions:
@@ -2137,8 +2243,7 @@ class AutonomousRepublic(gl.Contract):
         if now < int(self.commit_deadline) or now >= int(self.reveal_deadline):
             _expected("REVEAL_PHASE_CLOSED")
         faction = self._require_faction(faction_id)
-        if faction.controller != gl.message.sender_address:
-            _expected("FACTION_CONTROLLER_ONLY")
+        faction = self._require_live_controller(faction)
         key = _action_key(int(self.round_number), faction.faction_id)
         if key not in self.action_commitments:
             _expected("ACTION_NOT_COMMITTED")

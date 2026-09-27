@@ -20,7 +20,8 @@ function adapter(overrides: Partial<KeeperAdapter> = {}): KeeperAdapter {
   return {
     address: "0x3333333333333333333333333333333333333333",
     async readCase() { return { status: "FINAL" }; },
-    async readCourt() { return { case_count: 0 }; },
+    async readCourt() { return { open_case_count: 0 }; },
+    async readOpenCaseIds() { return []; },
     async readRepublic() { return { phase: "COMMIT" }; },
     async writeCourt() { return HASH; },
     async writeRepublic() { return HASH; },
@@ -89,7 +90,8 @@ describe("keeper security and scheduling", () => {
     const writes: string[] = [];
     const result = await runKeeper({
       adapter: adapter({
-        async readCourt() { return { case_count: 3 }; },
+        async readCourt() { return { open_case_count: 3 }; },
+        async readOpenCaseIds() { return [1, 2, 3]; },
         async readCase(_address, caseId) {
           if (caseId === 1) return { status: "BRIEFING", brief_deadline: 90 };
           if (caseId === 2) return { status: "APPEAL_WINDOW", appeal_deadline: 101 };
@@ -102,6 +104,34 @@ describe("keeper security and scheduling", () => {
     });
     expect(writes).toEqual(["resolve_case", "resolve_appeal"]);
     expect(result.submitted).toBe(2);
+  });
+
+  it("keeps an old unresolved case visible after many newer cases are filed", async () => {
+    const reads: number[] = [];
+    const writes: Array<{ caseId: number; method: string }> = [];
+    const result = await runKeeper({
+      adapter: adapter({
+        async readCourt() { return { case_count: 100, open_case_count: 1 }; },
+        async readOpenCaseIds(_address, limit) {
+          expect(limit).toBe(1);
+          return [1];
+        },
+        async readCase(_address, caseId) {
+          reads.push(caseId);
+          return { status: "BRIEFING", brief_deadline: 90 };
+        },
+        async writeCourt(_address, method, args) {
+          writes.push({ caseId: Number(args[0]), method });
+          return HASH;
+        },
+      }),
+      config: { ...config(), maxContracts: 1, republicAddresses: [] },
+      now: 100,
+    });
+
+    expect(reads).toEqual([1]);
+    expect(writes).toEqual([{ caseId: 1, method: "resolve_case" }]);
+    expect(result.submitted).toBe(1);
   });
 
   it("isolates a failed republic from court maintenance", async () => {

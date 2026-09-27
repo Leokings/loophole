@@ -8,7 +8,7 @@ No game-critical path may require a second human, a live lobby, or an off-chain 
 
 ### `AutonomousRepublic` owns
 
-- Factions, controllers, resources, legitimacy, stability, rounds, and deadlines.
+- Factions, renewable controller leases, resources, legitimacy, stability, rounds, and deadlines.
 - Human action and secret-objective commitments and reveals.
 - The public snapshot supplied to AI faction reasoning.
 - The closed action schema and all deterministic numeric effects.
@@ -16,15 +16,15 @@ No game-critical path may require a second human, a live lobby, or an off-chain 
 - Offices, election scheduling and outcomes.
 - Crisis creation, responses, scoring, and consequences.
 - Season scoring, winners, summaries, and lifetime points.
-- Exactly-once application of sanctions from its configured court.
+- Exactly-once application of sanctions from its configured court, keyed by the underlying faction action as well as case ID.
 
 ### `RepublicCourt` owns
 
-- Case identity and party authorization.
+- Case identity, action-based deduplication, party authorization, and the eight-round filing window.
 - Immutable evidence captured from resolved republic actions and laws effective at that round.
 - Briefing and appeal deadlines.
 - Consensus-validated verdicts and appeal decisions.
-- Final rulings, precedent, and a one-way sanction callback to its linked republic.
+- An oldest-first queue of every unresolved case, final rulings, precedent, and a replay-safe sanction callback to its linked republic.
 
 ### GenLayer nondeterministic execution owns
 
@@ -38,11 +38,11 @@ It does not own balances or arbitrary state transitions. Every result is parsed 
 
 ### The browser and keeper own
 
-- Wallet connection, polling, rendering, local unrevealed nonces, and transaction submission.
+- Wallet connection, polling, rendering, local unrevealed nonces, uncertain-finality recovery, and transaction submission.
 - Non-authoritative demo data when no live address is configured.
 - Permissionless wake-up calls after an on-chain deadline.
 
-The keeper has no policy input. It reads accepted phase/status fields and calls only `advance_round`, `finalize_season`, `start_next_season`, `resolve_case`, `finalize_case`, or `resolve_appeal` when the contract reports that the corresponding deadline has arrived.
+The keeper has no policy input. It reads accepted phase/status fields and calls only `advance_round`, `finalize_season`, `start_next_season`, `resolve_case`, `finalize_case`, or `resolve_appeal` when the contract reports that the corresponding deadline has arrived. Court work comes from the bounded oldest-first open-case queue rather than a recent numeric ID window.
 
 ## Round lifecycle
 
@@ -80,7 +80,7 @@ The LLM cannot invent action types, transfers, rewards, sanctions, or storage fi
 
 Statutes receive a one-round delayed effective date so the Executive has a veto window. Charters and charter amendments require a two-thirds threshold. Amendments supersede an earlier law and repeal closes its effective range; the historical record remains readable.
 
-When a controller files a case, the court reads the cited action, factions, and laws directly from the republic and freezes a canonical evidence digest. Later law amendments cannot rewrite what was effective when the disputed action occurred. A finalized sanction is sent asynchronously to `apply_court_ruling`; the republic recognizes only its configured court, stores each case digest once, and owns the fixed penalty table.
+When a controller files a case, the court reads the cited action, factions, and laws directly from the republic and freezes a canonical evidence digest. Later law amendments cannot rewrite what was effective when the disputed action occurred. One underlying faction action can create at most one case, and an action older than eight rounds is no longer litigable. A finalized sanction is sent asynchronously to `apply_court_ruling`; the republic recognizes only its configured court, deduplicates both the case and frozen action, and owns the fixed penalty table. If the child message fails, anyone may call `recover_sanction`; accepted republic state makes that replay idempotent.
 
 ## Seasons and population independence
 
@@ -95,7 +95,7 @@ This design makes low population a game characteristic rather than an availabili
 - Validators independently reason over the public state and proposed output rather than merely checking JSON shape.
 - Player-controlled doctrine, law, claim, brief, and response text is quoted as data and length/control-character bounded.
 - Deterministic validation runs before storage and again at settlement where relevant.
-- Cross-contract callbacks authenticate the caller and are idempotent by case ID and ruling digest.
+- Cross-contract callbacks authenticate the caller and are idempotent by case ID, underlying action, and ruling digest.
 - Contract source pins the GenLayer runtime dependency on its first line.
 
 ## Off-chain topology

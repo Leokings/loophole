@@ -16,7 +16,9 @@ For each configured republic, accepted `get_game` state maps to one permissionle
 | `READY_TO_FINALIZE_SEASON` | `finalize_season` |
 | `SEASON_FINAL` | `start_next_season` |
 
-For each configured court, the keeper scans only the bounded recent case range:
+For each configured court, the keeper asks the contract for a bounded batch from
+the head of its oldest-first open-case queue. Filing newer cases therefore
+cannot move an unresolved older case outside the scan:
 
 | Case state and elapsed deadline | Write |
 | --- | --- |
@@ -65,7 +67,7 @@ Inspect the transaction's execution result, not only its finalized status. Conse
 
 ### Court sanction not yet visible
 
-Finalization sends an asynchronous contract message. Confirm the court case is `FINAL`, inspect the triggered transaction, then check `get_court_ruling(case_id)` and `court_ruling_count` on the republic. Repeating `finalize_case` is not the remedy once the case is final.
+Finalization sends an asynchronous contract message. Confirm the court case is `FINAL`, inspect `sanction_applied` and the triggered transaction, then check `get_court_ruling(case_id)` and `court_ruling_count` on the republic. Repeating `finalize_case` is not the remedy once the case is final. Any account may call `recover_sanction(case_id)`; the court re-emits the frozen ruling and the republic's action-level idempotence prevents a duplicate penalty. A successful replay changes `sanction_applied` to true, while another replay becomes a no-op.
 
 ## Key rotation
 

@@ -35,6 +35,8 @@ export function CourtPanel({
   const [caseText, setCaseText] = useState("");
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [isPending, startTransition] = useTransition();
+  const maxCaseAgeRounds = snapshot.court?.max_case_age_rounds ?? 8;
+  const oldestCaseRound = Math.max(1, snapshot.game.round_number - maxCaseAgeRounds);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Math.floor(Date.now() / 1000)), 30_000);
@@ -129,6 +131,17 @@ export function CourtPanel({
     await onRefresh();
   }
 
+  async function recoverSanction(caseId: number) {
+    if (isDemo) {
+      onToast("Sanction recovery simulated. Live recovery safely replays the idempotent callback.");
+      return;
+    }
+    const account = await activeWallet();
+    const hash = await writeCourt(account, "recover_sanction", [caseId]);
+    await confirmFinality(hash, "Sanction recovery");
+    await onRefresh();
+  }
+
   return (
     <section className="court-view" aria-labelledby="court-heading">
       <div className="court-intro">
@@ -180,6 +193,19 @@ export function CourtPanel({
                 >
                   Advance this case <span aria-hidden="true">→</span>
                 </button>
+              ) : item.verdict === "VIOLATION" ? (
+                item.sanction_applied ? (
+                  <span className="case-status status-final">Sanction applied</span>
+                ) : (
+                  <button
+                    className="text-button"
+                    disabled={isPending}
+                    onClick={() => run(() => recoverSanction(item.case_id))}
+                    type="button"
+                  >
+                    Recover sanction callback <span aria-hidden="true">→</span>
+                  </button>
+                )
               ) : null}
             </article>
           ))}
@@ -201,7 +227,7 @@ export function CourtPanel({
             </select>
           </label>
           <div className="split-fields">
-            <label><span>Action round</span><input min={1} max={snapshot.game.round_number - 1} type="number" value={actionRound} onChange={(event) => setActionRound(Number(event.target.value))} /></label>
+            <label><span>Action round (last {maxCaseAgeRounds})</span><input min={oldestCaseRound} max={snapshot.game.round_number - 1} type="number" value={actionRound} onChange={(event) => setActionRound(Number(event.target.value))} /></label>
             <label>
               <span>Cited law</span>
               <select value={lawId} onChange={(event) => setLawId(Number(event.target.value))}>

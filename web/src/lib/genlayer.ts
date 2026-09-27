@@ -16,7 +16,11 @@ import type {
   RoundAction,
   RoundSummary,
 } from "@/lib/types";
-import { assertFinalizedTransaction, type FinalityReceipt } from "@/lib/transaction";
+import {
+  assertFinalizedTransaction,
+  TransactionFinalityUncertainError,
+  type FinalityReceipt,
+} from "@/lib/transaction";
 import {
   discoverEthereumProvider,
   ensureWalletNetwork,
@@ -193,12 +197,20 @@ export async function writeCourt(
 }
 
 export async function waitForFinalizedTransaction(hash: string): Promise<void> {
-  const receipt = await clientFor().waitForTransactionReceipt({
-    hash: hash as TransactionHash,
-    interval: 3_000,
-    retries: 240,
-    status: TransactionStatus.FINALIZED,
-  }) as unknown as FinalityReceipt;
+  let receipt: FinalityReceipt;
+  try {
+    receipt = await clientFor().waitForTransactionReceipt({
+      hash: hash as TransactionHash,
+      interval: 3_000,
+      retries: 240,
+      status: TransactionStatus.FINALIZED,
+    }) as unknown as FinalityReceipt;
+  } catch (cause) {
+    throw new TransactionFinalityUncertainError(
+      "Finality polling was interrupted. The transaction may still finalize; its local secret has been preserved.",
+      cause,
+    );
+  }
   assertFinalizedTransaction(receipt);
 }
 

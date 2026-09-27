@@ -236,8 +236,8 @@ def test_initializes_an_ai_controlled_republic(direct_vm, direct_deploy):
     game = contract.get_game()
     factions = json.loads(contract.get_factions_json())
 
-    assert game["contract_version"] == "1.0.0"
-    assert game["policy_version"] == "LOOPHOLE_AUTONOMOUS_REPUBLIC_V4"
+    assert game["contract_version"] == "1.1.0"
+    assert game["policy_version"] == "LOOPHOLE_AUTONOMOUS_REPUBLIC_V5"
     assert game["round_number"] == 1
     assert game["phase"] == "COMMIT"
     assert game["stability"] == 10
@@ -284,6 +284,37 @@ def test_humans_can_claim_and_release_ai_seats(
     contract.release_faction("MERCHANTS")
     assert contract.get_controlled_faction(alice_address) == ""
     assert contract.get_faction("MERCHANTS")["controller_mode"] == "AI"
+
+
+def test_expired_temporary_wallet_control_can_be_recovered_by_a_new_wallet(
+    direct_vm,
+    direct_deploy,
+    direct_alice,
+    direct_bob,
+):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    from genlayer.py.types import Address
+
+    direct_vm.sender = direct_alice
+    contract.claim_faction("MERCHANTS")
+    claimed = contract.get_faction("MERCHANTS")
+    assert claimed["controller_mode"] == "HUMAN"
+    assert claimed["control_recoverable"] is False
+
+    direct_vm.warp(as_iso(claimed["control_expires_at"]))
+    expired = contract.get_faction("MERCHANTS")
+    assert expired["controller_mode"] == "AI"
+    assert expired["control_recoverable"] is True
+    assert contract.get_controlled_faction(claimed["controller"]) == ""
+
+    # Claiming with a fresh temporary wallet atomically clears the abandoned
+    # lease, so closing the original browser tab cannot orphan the faction.
+    direct_vm.sender = direct_bob
+    contract.claim_faction("MERCHANTS")
+    recovered = contract.get_faction("MERCHANTS")
+    assert recovered["controller"] == Address(direct_bob)
+    assert recovered["controller_mode"] == "HUMAN"
+    assert recovered["control_recoverable"] is False
 
 
 def test_commit_reveal_binds_a_human_action(
@@ -675,20 +706,25 @@ def test_only_configured_court_can_apply_a_bounded_idempotent_ruling(
     digest = "a" * 64
     direct_vm.sender = direct_alice
     with direct_vm.expect_revert("COURT_ONLY"):
-        contract.apply_court_ruling(1, "MERCHANTS", "MAJOR", digest)
+        contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", digest)
 
     direct_vm.sender = direct_bob
-    contract.apply_court_ruling(1, "MERCHANTS", "MAJOR", digest)
-    contract.apply_court_ruling(1, "MERCHANTS", "MAJOR", digest)
+    contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", digest)
+    contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", digest)
 
     ruling = json.loads(contract.get_court_ruling(1))
     assert contract.get_faction("MERCHANTS")["legitimacy"] == 2
     assert contract.get_game()["stability"] == 8
     assert contract.get_game()["court_ruling_count"] == 1
     assert ruling["legitimacy_after"] == 2
+    assert ruling["action_round"] == 3
+    assert contract.is_court_action_sanctioned(3, "MERCHANTS", digest) is True
 
     with direct_vm.expect_revert("COURT_RULING_CONFLICT"):
-        contract.apply_court_ruling(1, "MERCHANTS", "MAJOR", "b" * 64)
+        contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", "b" * 64)
+
+    with direct_vm.expect_revert("COURT_ACTION_ALREADY_SANCTIONED"):
+        contract.apply_court_ruling(2, 3, "MERCHANTS", "MAJOR", "b" * 64)
 
 
 def test_world_initializes_offices_season_and_default_objectives(direct_vm, direct_deploy):

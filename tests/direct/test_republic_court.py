@@ -61,10 +61,19 @@ def faction(faction_id, controller):
     }
 
 
-def install_republic_hook(direct_vm, direct_alice, direct_bob, *, enacted=True):
+def install_republic_hook(
+    direct_vm,
+    direct_alice,
+    direct_bob,
+    *,
+    enacted=True,
+    round_number=3,
+    applied_actions=None,
+):
     from genlayer.py import calldata
 
     posts = []
+    applied_actions = applied_actions if applied_actions is not None else set()
 
     def hook(vm, request):
         if "CallContract" in request:
@@ -75,7 +84,7 @@ def install_republic_hook(direct_vm, direct_alice, direct_bob, *, enacted=True):
             if method == "get_game":
                 result = {
                     "republic_id": "FIRST-REPUBLIC",
-                    "round_number": 3,
+                    "round_number": round_number,
                 }
             elif method == "get_faction":
                 faction_id = args[0]
@@ -112,6 +121,8 @@ def install_republic_hook(direct_vm, direct_alice, direct_bob, *, enacted=True):
                     "effective_until_round": 0,
                     "veto_deadline_round": 0,
                 }
+            elif method == "is_court_action_sanctioned":
+                result = (int(args[0]), args[1], args[2]) in applied_actions
             else:
                 raise AssertionError(f"unexpected cross-contract view: {method}")
             return bytes([0]) + calldata.encode(result)
@@ -169,10 +180,11 @@ def test_initializes_a_republic_bound_court(direct_vm, direct_deploy, direct_bob
     court = deploy_court(direct_vm, direct_deploy, direct_bob)
     state = court.get_court()
 
-    assert state["contract_version"] == "0.1.0"
-    assert state["policy_version"] == "LOOPHOLE_REPUBLIC_COURT_V1"
+    assert state["contract_version"] == "0.2.0"
+    assert state["policy_version"] == "LOOPHOLE_REPUBLIC_COURT_V2"
     assert state["brief_seconds"] == 60
     assert state["case_count"] == 0
+    assert state["max_case_age_rounds"] == 8
 
 
 def test_filing_freezes_action_and_enacted_law_evidence(
@@ -197,6 +209,84 @@ def test_filing_freezes_action_and_enacted_law_evidence(
 
     with direct_vm.expect_revert("CASE_REFERENCE_DUPLICATE"):
         file_standard_case(court, direct_vm, direct_alice)
+
+
+def test_same_underlying_action_cannot_be_litigated_twice_under_new_references(
+    direct_vm,
+    direct_deploy,
+    direct_alice,
+    direct_bob,
+):
+    court = deploy_court(direct_vm, direct_deploy, direct_bob)
+    install_republic_hook(direct_vm, direct_alice, direct_bob)
+    file_standard_case(court, direct_vm, direct_alice)
+
+    with direct_vm.expect_revert("CASE_ACTION_DUPLICATE"):
+        court.file_case(
+            "CASE-UNDERMINE-0002",
+            "REFORMERS",
+            "MERCHANTS",
+            1,
+            "[1]",
+            "A second reference cannot relitigate the same recorded Merchant action and impose another sanction.",
+        )
+
+    assert court.get_court()["case_count"] == 1
+    assert court.get_open_case_ids(10) == [1]
+
+
+def test_case_filing_window_rejects_actions_older_than_eight_rounds(
+    direct_vm,
+    direct_deploy,
+    direct_alice,
+    direct_bob,
+):
+    court = deploy_court(direct_vm, direct_deploy, direct_bob)
+    install_republic_hook(direct_vm, direct_alice, direct_bob, round_number=10)
+
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("CASE_FILING_WINDOW_CLOSED"):
+        court.file_case(
+            "CASE-STALE-ACTION-1",
+            "REFORMERS",
+            "MERCHANTS",
+            1,
+            "[1]",
+            "This filing arrives after the bounded eight-round litigation window has already closed.",
+        )
+
+
+def test_open_case_queue_keeps_old_work_visible_and_reschedules_progressed_cases(
+    direct_vm,
+    direct_deploy,
+    direct_alice,
+    direct_bob,
+):
+    court = deploy_court(direct_vm, direct_deploy, direct_bob)
+    install_republic_hook(direct_vm, direct_alice, direct_bob)
+    file_standard_case(court, direct_vm, direct_alice)
+    court.file_case(
+        "CASE-UNDERMINE-ROUND-2",
+        "REFORMERS",
+        "MERCHANTS",
+        2,
+        "[1]",
+        "This separate resolved action is independently reviewable without hiding the older unresolved case.",
+    )
+    assert court.get_open_case_ids(64) == [1, 2]
+
+    direct_vm.warp(as_iso(court.get_case(1)["brief_deadline"]))
+    direct_vm.mock_llm(
+        r".*consensus-critical constitutional court for the political strategy game Loophole.*",
+        compact(no_violation_ruling()),
+    )
+    court.resolve_case(1)
+
+    # A case that advances to another timed state moves behind still-unprocessed
+    # work, preserving bounded oldest-first keeper progress.
+    assert court.get_open_case_ids(64) == [2, 1]
+    assert court.get_court()["open_case_head"] == 2
+    assert court.get_court()["open_case_tail"] == 1
 
 
 def test_case_requires_plaintiff_control_and_enacted_law(
@@ -275,7 +365,54 @@ def test_briefs_ruling_finality_precedent_and_sanction_message(
     assert court.get_court()["finalized_case_count"] == 1
     assert len(posts) == 1
     assert posts[0]["calldata"]["method"] == "apply_court_ruling"
-    assert posts[0]["calldata"]["args"][2] == "MINOR"
+    assert posts[0]["calldata"]["args"][1] == 1
+    assert posts[0]["calldata"]["args"][2] == "MERCHANTS"
+    assert posts[0]["calldata"]["args"][3] == "MINOR"
+
+
+def test_failed_sanction_callback_can_be_recovered_permissionlessly_and_idempotently(
+    direct_vm,
+    direct_deploy,
+    direct_alice,
+    direct_bob,
+    direct_charlie,
+):
+    court = deploy_court(direct_vm, direct_deploy, direct_bob)
+    applied_actions = set()
+    posts = install_republic_hook(
+        direct_vm,
+        direct_alice,
+        direct_bob,
+        applied_actions=applied_actions,
+    )
+    file_standard_case(court, direct_vm, direct_alice)
+    direct_vm.warp(as_iso(court.get_case(1)["brief_deadline"]))
+    direct_vm.mock_llm(
+        r".*consensus-critical constitutional court for the political strategy game Loophole.*",
+        compact(violation_ruling("REPRIMAND")),
+    )
+    court.resolve_case(1)
+    direct_vm.warp(as_iso(court.get_case(1)["appeal_deadline"]))
+    court.finalize_case(1)
+
+    finalized = court.get_case(1)
+    assert finalized["status"] == "FINAL"
+    assert finalized["sanction_applied"] is False
+    assert finalized["sanction_dispatch_count"] == 1
+    assert len(posts) == 1
+
+    # Any account may replay the finalized callback after an asynchronous child
+    # message failure. The republic remains the source of truth for whether it
+    # was actually applied.
+    direct_vm.sender = direct_charlie
+    assert court.recover_sanction(1) is True
+    assert len(posts) == 2
+    assert court.get_case(1)["sanction_dispatch_count"] == 2
+
+    applied_actions.add((1, "MERCHANTS", finalized["ruling_digest"]))
+    assert court.get_case(1)["sanction_applied"] is True
+    assert court.recover_sanction(1) is False
+    assert len(posts) == 2
 
 
 def test_appeal_can_reverse_and_finalizes_without_sanction(

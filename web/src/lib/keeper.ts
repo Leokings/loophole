@@ -29,6 +29,7 @@ export type KeeperAdapter = {
   address: string;
   readCase(address: string, caseId: number): Promise<Record<string, unknown>>;
   readCourt(address: string): Promise<Record<string, unknown>>;
+  readOpenCaseIds(address: string, limit: number): Promise<unknown[]>;
   readRepublic(address: string): Promise<Record<string, unknown>>;
   writeCourt(address: string, method: string, args: unknown[]): Promise<string>;
   writeRepublic(address: string, method: string): Promise<string>;
@@ -175,10 +176,15 @@ export async function runKeeper({
   for (const address of config.courtAddresses) {
     try {
       const court = await adapter.readCourt(address);
-      const caseCount = scalar(court.case_count);
-      const firstCase = Math.max(1, caseCount - config.maxContracts + 1);
+      const openCaseCount = scalar(court.open_case_count);
+      const scanLimit = Math.min(openCaseCount, config.maxContracts);
+      const openCaseIds = scanLimit > 0
+        ? (await adapter.readOpenCaseIds(address, scanLimit))
+          .map(scalar)
+          .filter((caseId) => Number.isSafeInteger(caseId) && caseId > 0)
+        : [];
       let actionable = 0;
-      for (let caseId = firstCase; caseId <= caseCount; caseId += 1) {
+      for (const caseId of openCaseIds) {
         const item = await adapter.readCase(address, caseId);
         const status = String(item.status ?? "");
         let method = "";

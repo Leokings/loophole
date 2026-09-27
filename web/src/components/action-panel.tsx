@@ -10,6 +10,7 @@ import {
   waitForFinalizedTransaction,
   writeRepublic,
 } from "@/lib/genlayer";
+import { shouldPreservePendingSecret } from "@/lib/transaction";
 import type { ActionDraft, PendingReveal, RepublicSnapshot } from "@/lib/types";
 
 const actionLabels: Record<string, string> = {
@@ -189,11 +190,31 @@ export function ActionPanel({
     try {
       await confirmFinality(transactionHash, "Action commitment");
     } catch (cause) {
-      window.localStorage.removeItem(key);
-      setPendingReveal(null);
+      if (!shouldPreservePendingSecret(cause)) {
+        window.localStorage.removeItem(key);
+        setPendingReveal(null);
+      }
       throw cause;
     }
     const finalizedRecord = { ...record, finalized: true };
+    window.localStorage.setItem(key, JSON.stringify(finalizedRecord));
+    setPendingReveal(finalizedRecord);
+    await onRefresh();
+  }
+
+  async function resumeCommitFinality() {
+    if (!pendingReveal) throw new Error("No submitted commitment was found.");
+    const key = actionStorageKey("republic", pendingReveal.round, pendingReveal.faction_id);
+    try {
+      await confirmFinality(pendingReveal.transactionHash, "Action commitment");
+    } catch (cause) {
+      if (!shouldPreservePendingSecret(cause)) {
+        window.localStorage.removeItem(key);
+        setPendingReveal(null);
+      }
+      throw cause;
+    }
+    const finalizedRecord = { ...pendingReveal, finalized: true };
     window.localStorage.setItem(key, JSON.stringify(finalizedRecord));
     setPendingReveal(finalizedRecord);
     await onRefresh();
@@ -257,11 +278,16 @@ export function ActionPanel({
       nonce,
     );
     const hash = await writeRepublic(account, "commit_objective", [selectedFactionId, commitment]);
-    await confirmFinality(hash, "Objective commitment");
-    window.localStorage.setItem(
-      objectiveStorageKey("republic", snapshot.game.season_number, selectedFactionId),
-      JSON.stringify({ nonce, objectiveTarget, objectiveType }),
-    );
+    const key = objectiveStorageKey("republic", snapshot.game.season_number, selectedFactionId);
+    const record = { finalized: false, nonce, objectiveTarget, objectiveType, transactionHash: hash };
+    window.localStorage.setItem(key, JSON.stringify(record));
+    try {
+      await confirmFinality(hash, "Objective commitment");
+    } catch (cause) {
+      if (!shouldPreservePendingSecret(cause)) window.localStorage.removeItem(key);
+      throw cause;
+    }
+    window.localStorage.setItem(key, JSON.stringify({ ...record, finalized: true }));
     await onRefresh();
   }
 
@@ -270,10 +296,26 @@ export function ActionPanel({
     const key = objectiveStorageKey("republic", snapshot.game.season_number, selectedFactionId);
     const stored = window.localStorage.getItem(key);
     if (!stored) throw new Error("This browser does not have the secret objective nonce.");
-    const secret = JSON.parse(stored) as { nonce: string; objectiveTarget: string; objectiveType: string };
+    const secret = JSON.parse(stored) as {
+      finalized?: boolean;
+      nonce: string;
+      objectiveTarget: string;
+      objectiveType: string;
+      transactionHash?: string;
+    };
     if (isDemo) {
       onToast("Secret objective revealed in demo mode.");
       return;
+    }
+    if (!secret.finalized && secret.transactionHash) {
+      try {
+        await confirmFinality(secret.transactionHash, "Objective commitment");
+      } catch (cause) {
+        if (!shouldPreservePendingSecret(cause)) window.localStorage.removeItem(key);
+        throw cause;
+      }
+      secret.finalized = true;
+      window.localStorage.setItem(key, JSON.stringify(secret));
     }
     const hash = await writeRepublic(account, "reveal_objective", [
       selectedFactionId,
@@ -329,6 +371,11 @@ export function ActionPanel({
           <a href={transactionExplorerUrl(pendingReveal.transactionHash)} rel="noreferrer" target="_blank">
             View transaction
           </a>
+          {!pendingReveal.finalized ? (
+            <button className="text-button" disabled={isPending} onClick={() => run(resumeCommitFinality)} type="button">
+              Check finality
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -414,7 +461,7 @@ export function ActionPanel({
             {pendingReveal ? "Action sealed" : "Seal action"}
           </button>
         ) : snapshot.game.phase === "REVEAL" ? (
-          <button className="primary-button" type="button" onClick={() => run(revealAction)} disabled={isPending || !pendingReveal}>Reveal action</button>
+          <button className="primary-button" type="button" onClick={() => run(revealAction)} disabled={isPending || !pendingReveal?.finalized}>Reveal action</button>
         ) : canAdvance ? (
           <button className="primary-button" type="button" onClick={() => run(advanceWorld)} disabled={isPending}>Advance republic</button>
         ) : null}

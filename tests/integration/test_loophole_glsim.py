@@ -155,14 +155,10 @@ def test_autonomous_legislature_court_and_callback_reach_consensus():
         [CalldataAddress(republic.address), 60, 60],
         "2026-08-25T20:00:10Z",
     )
-    link_receipt = republic.set_court_address(
-        args=[CalldataAddress(court.address)]
-    ).transact(
-        transaction_context=_context("2026-08-25T20:00:20Z"),
-        wait_transaction_status=TransactionStatus.FINALIZED,
-    )
-    _assert_consensus_success(link_receipt)
-    assert republic.get_game(args=[]).call()["court_configured"] is True
+    # Deliberately leave the republic unlinked until after the ruling finalizes.
+    # This makes the court's asynchronous sanction callback fail and exercises
+    # the permissionless recovery path against two actual contracts.
+    assert republic.get_game(args=[]).call()["court_configured"] is False
     assert _address_hex(court.get_court(args=[]).call()["republic_address"]) == republic.address.lower()
 
     _advance(
@@ -287,11 +283,35 @@ def test_autonomous_legislature_court_and_callback_reach_consensus():
     final_case = court.get_case(args=[1]).call()
     assert final_case["status"] == "FINAL"
     assert final_case["precedent_id"] == 1
+    assert final_case["sanction_applied"] is False
+    assert final_case["sanction_dispatch_count"] == 1
     assert court.get_court(args=[]).call()["precedent_count"] == 1
+    assert republic.get_game(args=[]).call()["court_ruling_count"] == 0
+
+    link_receipt = republic.set_court_address(
+        args=[CalldataAddress(court.address)]
+    ).transact(
+        transaction_context=_context("2026-08-25T20:10:30Z"),
+        wait_transaction_status=TransactionStatus.FINALIZED,
+    )
+    _assert_consensus_success(link_receipt)
+
+    recovery_receipt = court.recover_sanction(args=[1]).transact(
+        transaction_context=_context("2026-08-25T20:10:40Z"),
+        wait_transaction_status=TransactionStatus.FINALIZED,
+        wait_triggered_transactions=True,
+        wait_triggered_transactions_status=TransactionStatus.FINALIZED,
+    )
+    _assert_consensus_success(recovery_receipt)
+
+    recovered_case = court.get_case(args=[1]).call()
+    assert recovered_case["sanction_applied"] is True
+    assert recovered_case["sanction_dispatch_count"] == 2
     final_game = republic.get_game(args=[]).call()
     assert final_game["court_ruling_count"] == 1
     callback = json.loads(republic.get_court_ruling(args=[1]).call())
     assert callback["case_id"] == 1
+    assert callback["action_round"] == 3
     assert callback["defendant_faction_id"] == "MERCHANTS"
     assert callback["sanction"] == "REPRIMAND"
     assert callback["legitimacy_after"] == callback["legitimacy_before"] - 1

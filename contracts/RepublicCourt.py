@@ -11,8 +11,8 @@ import datetime
 import json
 
 
-CONTRACT_VERSION = "0.1.0"
-POLICY_VERSION = "LOOPHOLE_REPUBLIC_COURT_V1"
+CONTRACT_VERSION = "0.2.0"
+POLICY_VERSION = "LOOPHOLE_REPUBLIC_COURT_V2"
 DIGEST_DOMAIN = "LOOPHOLE_REPUBLIC_COURT"
 
 STATUS_BRIEFING = "BRIEFING"
@@ -49,6 +49,8 @@ MAX_LAW_IDS_JSON_CHARS = 256
 MAX_EVIDENCE_JSON_CHARS = 16000
 MAX_PROMPT_CHARS = 30000
 RECENT_PRECEDENT_LIMIT = 12
+MAX_CASE_AGE_ROUNDS = 8
+MAX_KEEPER_CASE_BATCH = 64
 
 ZERO_ADDRESS = Address(b"\x00" * 20)
 
@@ -92,6 +94,8 @@ class CourtCase:
     ruling_digest: str
     precedent_id: u256
     finalized_at: u256
+    action_key: str
+    sanction_dispatch_count: u256
 
 
 @allow_storage
@@ -435,6 +439,13 @@ class RepublicCourt(gl.Contract):
     cases: TreeMap[u256, CourtCase]
     case_by_reference: TreeMap[str, u256]
     precedents: TreeMap[u256, Precedent]
+    case_by_action: TreeMap[str, u256]
+    open_case_count: u256
+    open_case_head: u256
+    open_case_tail: u256
+    open_case_previous: TreeMap[u256, u256]
+    open_case_next: TreeMap[u256, u256]
+    open_case_members: TreeMap[u256, bool]
 
     def __init__(
         self,
@@ -456,6 +467,9 @@ class RepublicCourt(gl.Contract):
         self.case_count = u256(0)
         self.finalized_case_count = u256(0)
         self.precedent_count = u256(0)
+        self.open_case_count = u256(0)
+        self.open_case_head = u256(0)
+        self.open_case_tail = u256(0)
 
     def _require_case(self, case_id: int) -> CourtCase:
         if isinstance(case_id, bool) or not isinstance(case_id, int) or case_id < 1:
@@ -463,6 +477,52 @@ class RepublicCourt(gl.Contract):
         if case_id > int(self.case_count):
             _expected("CASE_NOT_FOUND")
         return self.cases[case_id]
+
+    def _action_key(self, action_round: int, defendant_faction_id: str) -> str:
+        return _digest(
+            "ACTION_CASE",
+            [
+                _address_text(self.republic_address),
+                str(action_round),
+                defendant_faction_id,
+            ],
+        )
+
+    def _enqueue_open_case(self, case_id: int) -> None:
+        if case_id in self.open_case_members and self.open_case_members[case_id]:
+            _expected("CASE_ALREADY_QUEUED")
+        previous_id = int(self.open_case_tail)
+        self.open_case_previous[case_id] = u256(previous_id)
+        self.open_case_next[case_id] = u256(0)
+        if previous_id == 0:
+            self.open_case_head = u256(case_id)
+        else:
+            self.open_case_next[previous_id] = u256(case_id)
+        self.open_case_tail = u256(case_id)
+        self.open_case_members[case_id] = True
+        self.open_case_count += 1
+
+    def _remove_open_case(self, case_id: int) -> None:
+        if case_id not in self.open_case_members or not self.open_case_members[case_id]:
+            _expected("CASE_NOT_QUEUED")
+        previous_id = int(self.open_case_previous[case_id])
+        next_id = int(self.open_case_next[case_id])
+        if previous_id == 0:
+            self.open_case_head = u256(next_id)
+        else:
+            self.open_case_next[previous_id] = u256(next_id)
+        if next_id == 0:
+            self.open_case_tail = u256(previous_id)
+        else:
+            self.open_case_previous[next_id] = u256(previous_id)
+        self.open_case_previous[case_id] = u256(0)
+        self.open_case_next[case_id] = u256(0)
+        self.open_case_members[case_id] = False
+        self.open_case_count -= 1
+
+    def _reschedule_open_case(self, case_id: int) -> None:
+        self._remove_open_case(case_id)
+        self._enqueue_open_case(case_id)
 
     def _republic_view(self):
         return gl.get_contract_at(self.republic_address).view()
@@ -519,6 +579,29 @@ class RepublicCourt(gl.Contract):
         case.precedent_rule = ruling["precedent_rule"]
         return case
 
+    def _sanction_is_applied(self, case: CourtCase) -> bool:
+        if case.status != STATUS_FINAL or case.verdict != VERDICT_VIOLATION:
+            return False
+        return bool(
+            self._republic_view().is_court_action_sanctioned(
+                int(case.action_round),
+                case.defendant_faction_id,
+                case.ruling_digest,
+            )
+        )
+
+    def _dispatch_sanction(self, case: CourtCase) -> CourtCase:
+        case.sanction_dispatch_count += 1
+        self.cases[case.case_id] = case
+        gl.get_contract_at(self.republic_address).emit(on="finalized").apply_court_ruling(
+            int(case.case_id),
+            int(case.action_round),
+            case.defendant_faction_id,
+            case.sanction,
+            case.ruling_digest,
+        )
+        return case
+
     def _finalize(self, case: CourtCase, now: int) -> None:
         if case.status == STATUS_FINAL:
             _expected("CASE_ALREADY_FINAL")
@@ -556,16 +639,12 @@ class RepublicCourt(gl.Contract):
         case.precedent_id = precedent_id
         case.finalized_at = u256(now)
         case.status = STATUS_FINAL
+        self._remove_open_case(int(case.case_id))
         self.cases[case.case_id] = case
         self.finalized_case_count += 1
 
         if case.verdict == VERDICT_VIOLATION:
-            gl.get_contract_at(self.republic_address).emit(on="finalized").apply_court_ruling(
-                int(case.case_id),
-                case.defendant_faction_id,
-                case.sanction,
-                ruling_digest,
-            )
+            self._dispatch_sanction(case)
 
     @gl.public.view
     def get_court(self) -> dict:
@@ -578,13 +657,17 @@ class RepublicCourt(gl.Contract):
             "appeal_seconds": self.appeal_seconds,
             "case_count": self.case_count,
             "finalized_case_count": self.finalized_case_count,
-            "open_case_count": int(self.case_count) - int(self.finalized_case_count),
+            "open_case_count": self.open_case_count,
+            "open_case_head": self.open_case_head,
+            "open_case_tail": self.open_case_tail,
             "precedent_count": self.precedent_count,
+            "max_case_age_rounds": MAX_CASE_AGE_ROUNDS,
         }
 
     @gl.public.view
     def get_case(self, case_id: int) -> dict:
         case = self._require_case(case_id)
+        sanction_applied = self._sanction_is_applied(case)
         return {
             "case_id": case.case_id,
             "case_reference": case.case_reference,
@@ -618,7 +701,22 @@ class RepublicCourt(gl.Contract):
             "ruling_digest": case.ruling_digest,
             "precedent_id": case.precedent_id,
             "finalized_at": case.finalized_at,
+            "action_key": case.action_key,
+            "sanction_dispatch_count": case.sanction_dispatch_count,
+            "sanction_applied": sanction_applied,
         }
+
+    @gl.public.view
+    def get_open_case_ids(self, limit: int) -> list[int]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            _expected("OPEN_CASE_LIMIT")
+        bounded_limit = min(limit, MAX_KEEPER_CASE_BATCH)
+        result: list[int] = []
+        case_id = int(self.open_case_head)
+        while case_id > 0 and len(result) < bounded_limit:
+            result.append(case_id)
+            case_id = int(self.open_case_next[case_id])
+        return result
 
     @gl.public.view
     def get_precedent(self, precedent_id: int) -> dict:
@@ -674,6 +772,8 @@ class RepublicCourt(gl.Contract):
         game = republic.get_game()
         if not isinstance(game, dict) or action_round >= int(game.get("round_number", 0)):
             _expected("ACTION_ROUND_NOT_RESOLVED")
+        if int(game["round_number"]) - action_round > MAX_CASE_AGE_ROUNDS:
+            _expected("CASE_FILING_WINDOW_CLOSED")
         plaintiff = republic.get_faction(plaintiff_id)
         defendant = republic.get_faction(defendant_id)
         if not isinstance(plaintiff, dict) or plaintiff.get("controller") != gl.message.sender_address:
@@ -683,6 +783,9 @@ class RepublicCourt(gl.Contract):
         action = republic.get_round_action(action_round, defendant_id)
         if not isinstance(action, dict) or action.get("faction_id") != defendant_id:
             _expected("CASE_ACTION")
+        action_key = self._action_key(action_round, defendant_id)
+        if action_key in self.case_by_action:
+            _expected("CASE_ACTION_DUPLICATE")
 
         laws: list[dict] = []
         for law_id in cited_law_ids:
@@ -779,8 +882,12 @@ class RepublicCourt(gl.Contract):
             ruling_digest="",
             precedent_id=u256(0),
             finalized_at=u256(0),
+            action_key=action_key,
+            sanction_dispatch_count=u256(0),
         )
         self.case_by_reference[canonical_reference] = case_id
+        self.case_by_action[action_key] = case_id
+        self._enqueue_open_case(int(case_id))
         return int(case_id)
 
     @gl.public.write
@@ -847,6 +954,7 @@ class RepublicCourt(gl.Contract):
         case.appeal_deadline = u256(now + int(self.appeal_seconds))
         case.status = STATUS_APPEAL_WINDOW
         self.cases[case.case_id] = case
+        self._reschedule_open_case(int(case.case_id))
 
     @gl.public.write
     def appeal_case(self, case_id: int, faction_id: str, appeal_argument: str) -> None:
@@ -871,6 +979,7 @@ class RepublicCourt(gl.Contract):
         case.appeal_response_deadline = u256(now + int(self.appeal_seconds))
         case.status = STATUS_APPEALED
         self.cases[case.case_id] = case
+        self._reschedule_open_case(int(case.case_id))
 
     @gl.public.write
     def submit_appeal_response(self, case_id: int, faction_id: str, response_text: str) -> None:
@@ -945,6 +1054,22 @@ class RepublicCourt(gl.Contract):
         case = self._store_ruling(case, ruling)
         case.appeal_decision = ruling["decision"]
         self._finalize(case, now)
+
+    @gl.public.write
+    def recover_sanction(self, case_id: int) -> bool:
+        """Permissionlessly replay a failed finalized sanction callback.
+
+        Replays are safe because AutonomousRepublic deduplicates by the frozen
+        action identity as well as by case ID and ruling digest.
+        """
+        _no_value()
+        case = self._require_case(case_id)
+        if case.status != STATUS_FINAL or case.verdict != VERDICT_VIOLATION:
+            _expected("CASE_HAS_NO_RECOVERABLE_SANCTION")
+        if self._sanction_is_applied(case):
+            return False
+        self._dispatch_sanction(case)
+        return True
 
     @gl.public.write
     def finalize_case(self, case_id: int) -> None:
