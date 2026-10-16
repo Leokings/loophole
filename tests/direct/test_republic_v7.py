@@ -87,6 +87,32 @@ def test_uncertified_law_expires_and_unadjudicable_law_is_terminal(direct_vm, di
     assert contract.get_law(1)["status"] == "UNADJUDICABLE"
 
 
+def test_repeal_needs_no_certification(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS", "PROPOSE_CHARTER", title="Observable Charter", law_text="Every faction may publish a public delivery schedule for its district.", rationale="Set a measurable public duty that can be checked against the recorded action."),
+        action("REFORMERS"), action("TRADITIONALISTS"),
+    ])
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="Every faction may publish a public delivery schedule")
+    assert contract.certify_law(1) == "ADJUDICABLE"
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS"),
+        action("REFORMERS", stances=[{"law_id": 1, "stance": "SUPPORT"}]),
+        action("TRADITIONALISTS"),
+    ])
+    advance_with_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
+    assert contract.get_law(1)["status"] == "ENACTED"
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS"),
+        action("REFORMERS", "REPEAL_LAW", law_id=1, rationale="Remove the obsolete public schedule rule using its recorded law ID."),
+        action("TRADITIONALISTS"),
+    ])
+    repeal = contract.get_law(2)
+    assert repeal["law_kind"] == "REPEAL"
+    assert repeal["certification"] == "NOT_REQUIRED"
+
+
 def test_later_stance_overwrites_earlier_and_abstain_clears(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
     advance_with_ai(contract, direct_vm, [
