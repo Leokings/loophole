@@ -9,6 +9,7 @@ import { Chamber } from "@/components/chamber";
 import { Chronicle } from "@/components/chronicle";
 import { CourtPanel } from "@/components/court-panel";
 import { FactionRail } from "@/components/faction-rail";
+import { HeartbeatBadge } from "@/components/heartbeat-badge";
 import { PowerPanel } from "@/components/power-panel";
 import {
   connectWallet,
@@ -159,7 +160,7 @@ export function GameShell() {
       </header>
 
       <div className="system-strip">
-        <span><i className="consensus-light" /> Consensus world online</span>
+        <HeartbeatBadge game={snapshot.game} isDemo={isDemo} />
         <span>{snapshot.game.republic_id}</span>
         <span>{isDemo ? "No contract configured" : shortAddress(republicAddress)}</span>
         <span>{snapshot.game.court_configured ? `Court ${isDemo ? "linked" : shortAddress(courtAddress)}` : "Court not linked"}</span>

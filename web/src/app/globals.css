@@ -297,6 +297,24 @@ summary:focus-visible {
   gap: 7px;
 }
 
+.system-strip .heartbeat.waiting {
+  color: var(--amber);
+}
+
+.system-strip .heartbeat.waiting i {
+  background: var(--amber);
+  box-shadow: 0 0 12px rgba(229, 168, 93, 0.6);
+}
+
+.system-strip .heartbeat.stalled {
+  color: var(--danger);
+}
+
+.system-strip .heartbeat.stalled i {
+  background: var(--danger);
+  box-shadow: 0 0 12px rgba(237, 125, 104, 0.6);
+}
+
 .system-strip button {
   background: transparent;
   border: 0;

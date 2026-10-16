@@ -16,6 +16,7 @@ import type {
   RoundAction,
   RoundSummary,
 } from "@/lib/types";
+import { republicSlotSeconds } from "@/lib/heartbeat";
 import {
   assertFinalizedTransaction,
   TransactionFinalityUncertainError,
@@ -41,6 +42,10 @@ const selectedChain = configuredNetwork === "studionet" ? studionet : testnetBra
 const rpcUrl = process.env.NEXT_PUBLIC_GENLAYER_RPC_URL || selectedChain.rpcUrls.default.http[0];
 
 export const networkLabel = configuredNetwork === "studionet" ? "StudioNet accepted" : "Bradbury accepted";
+export const keeperSlotSeconds = republicSlotSeconds(
+  configuredNetwork,
+  process.env.NEXT_PUBLIC_LOOPHOLE_KEEPER_SLOT_SECONDS,
+);
 
 export const hasLiveRepublic = ADDRESS_PATTERN.test(republicAddress);
 export const hasLiveCourt = ADDRESS_PATTERN.test(courtAddress);

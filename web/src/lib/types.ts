@@ -77,6 +77,7 @@ export type Crisis = {
 export type GameState = {
   active_crisis_id: number;
   commit_deadline: number;
+  commit_seconds?: number;
   control_lease_seconds: number;
   court_configured: boolean;
   court_ruling_count: number;
@@ -93,6 +94,7 @@ export type GameState = {
   policy_version: string;
   republic_id: string;
   reveal_deadline: number;
+  reveal_seconds?: number;
   round_number: number;
   season_end_round: number;
   season_number: number;

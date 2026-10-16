@@ -134,6 +134,58 @@ describe("keeper security and scheduling", () => {
     expect(result.submitted).toBe(1);
   });
 
+  it("paces StudioNet republic writes to one keeper window per hour", async () => {
+    const studio = parseKeeperConfig({
+      GENLAYER_KEEPER_PRIVATE_KEY: KEY,
+      LOOPHOLE_REPUBLIC_ADDRESSES: REPUBLIC,
+      NEXT_PUBLIC_GENLAYER_NETWORK: "studionet",
+    });
+    expect(studio.republicSlotSeconds).toBe(3600);
+    const reads: number[] = [];
+    const writes: string[] = [];
+    const keeperAdapter = adapter({
+      async readRepublic() { reads.push(1); return { phase: "READY_TO_ADVANCE" }; },
+      async writeRepublic(_address, method) { writes.push(method); return HASH; },
+    });
+
+    const paced = await runKeeper({ adapter: keeperAdapter, config: studio, now: 7200 + 318 });
+    expect(paced.results[0]).toMatchObject({ nextSlotAt: 10_800, status: "paced" });
+    expect(reads).toEqual([]);
+    expect(writes).toEqual([]);
+
+    const acted = await runKeeper({ adapter: keeperAdapter, config: studio, now: 7200 + 18 });
+    expect(writes).toEqual(["advance_round"]);
+    expect(acted.submitted).toBe(1);
+  });
+
+  it("allows pacing to be disabled or overridden", () => {
+    const base = {
+      GENLAYER_KEEPER_PRIVATE_KEY: KEY,
+      LOOPHOLE_REPUBLIC_ADDRESSES: REPUBLIC,
+      NEXT_PUBLIC_GENLAYER_NETWORK: "studionet",
+    };
+    expect(parseKeeperConfig({ ...base, NEXT_PUBLIC_LOOPHOLE_KEEPER_SLOT_SECONDS: "0" }).republicSlotSeconds).toBe(0);
+    expect(parseKeeperConfig({ ...base, NEXT_PUBLIC_LOOPHOLE_KEEPER_SLOT_SECONDS: "1800" }).republicSlotSeconds).toBe(1800);
+    expect(parseKeeperConfig({ ...base, NEXT_PUBLIC_LOOPHOLE_KEEPER_SLOT_SECONDS: "-5" }).republicSlotSeconds).toBe(3600);
+    expect(config().republicSlotSeconds).toBe(0);
+  });
+
+  it("defers a StudioNet storage-budget refusal instead of reporting failure", async () => {
+    const result = await runKeeper({
+      adapter: adapter({
+        async readRepublic() { return { phase: "SEASON_FINAL" }; },
+        async writeRepublic() {
+          throw new Error("GenLayer RPC error (eth_sendRawTransaction): Contract 0x23d1 exceeded the daily snapshot storage budget (1 of 2 bytes used)");
+        },
+      }),
+      config: { ...config(), courtAddresses: [] },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.failed).toBe(0);
+    expect(result.deferred).toBe(1);
+    expect(result.results[0]).toMatchObject({ reason: "STUDIO_DAILY_STORAGE_BUDGET", status: "deferred" });
+  });
+
   it("isolates a failed republic from court maintenance", async () => {
     const result = await runKeeper({
       adapter: adapter({

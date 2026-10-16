@@ -1,4 +1,7 @@
+import { isInKeeperWindow, nextKeeperSlotAt, republicSlotSeconds } from "./heartbeat";
+
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+const STORAGE_BUDGET_PATTERN = /daily snapshot storage budget/i;
 const PRIVATE_KEY_PATTERN = /^0x[a-fA-F0-9]{64}$/;
 const HASH_PATTERN = /^0x[a-fA-F0-9]{64}$/;
 const DEFAULT_MAX_CONTRACTS = 20;
@@ -11,6 +14,7 @@ export type KeeperConfig = {
   network: "studionet" | "testnetBradbury";
   privateKey: `0x${string}`;
   republicAddresses: string[];
+  republicSlotSeconds: number;
   rpcUrl: string;
 };
 
@@ -130,6 +134,7 @@ export function parseKeeperConfig(environment: Readonly<Record<string, string | 
     network: networkName,
     privateKey: privateKey as `0x${string}`,
     republicAddresses,
+    republicSlotSeconds: republicSlotSeconds(networkName, environment.NEXT_PUBLIC_LOOPHOLE_KEEPER_SLOT_SECONDS),
     rpcUrl,
   };
 }
@@ -144,11 +149,36 @@ export async function runKeeper({
   now?: number;
 }) {
   const results: Array<Record<string, unknown>> = [];
+  let deferred = 0;
   let failed = 0;
   let skipped = 0;
   let submitted = 0;
 
+  // A refused write that the network will accept again after its daily budget resets
+  // is deferred work, not a keeper failure.
+  function recordError(entry: Record<string, unknown>, cause: unknown) {
+    const error = cause instanceof Error ? cause.message : "Unknown keeper error";
+    if (STORAGE_BUDGET_PATTERN.test(error)) {
+      deferred += 1;
+      results.push({ ...entry, error, reason: "STUDIO_DAILY_STORAGE_BUDGET", status: "deferred" });
+    } else {
+      failed += 1;
+      results.push({ ...entry, error, status: "failed" });
+    }
+  }
+
+  const republicWindowOpen = isInKeeperWindow(now, config.republicSlotSeconds);
   for (const address of config.republicAddresses) {
+    if (!republicWindowOpen) {
+      skipped += 1;
+      results.push({
+        address,
+        kind: "republic",
+        nextSlotAt: nextKeeperSlotAt(now, config.republicSlotSeconds),
+        status: "paced",
+      });
+      continue;
+    }
     try {
       const game = await adapter.readRepublic(address);
       const phase = String(game.phase ?? "UNKNOWN");
@@ -168,8 +198,7 @@ export async function runKeeper({
       submitted += 1;
       results.push({ address, kind: "republic", method, phase, status: "submitted", transactionHash });
     } catch (cause) {
-      failed += 1;
-      results.push({ address, error: cause instanceof Error ? cause.message : "Unknown keeper error", kind: "republic", status: "failed" });
+      recordError({ address, kind: "republic" }, cause);
     }
   }
 
@@ -202,12 +231,12 @@ export async function runKeeper({
         results.push({ address, kind: "court", status: "skipped" });
       }
     } catch (cause) {
-      failed += 1;
-      results.push({ address, error: cause instanceof Error ? cause.message : "Unknown keeper error", kind: "court", status: "failed" });
+      recordError({ address, kind: "court" }, cause);
     }
   }
 
   return {
+    deferred,
     failed,
     keeperAddress: adapter.address,
     ok: failed === 0,
