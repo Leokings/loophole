@@ -7,6 +7,7 @@ from test_autonomous_republic import (
     deploy_republic,
     mock_crisis,
     mock_crisis_judgment,
+    mock_law_certification,
 )
 
 
@@ -154,3 +155,46 @@ def test_close_applies_fixed_consequences_and_outcomes(direct_vm, direct_deploy)
             int(contract.factions[faction_id].legitimacy) for faction_id in FACTION_IDS
         ] == [6 if label == "MET" else 5 for label in labels]
         assert json.loads(contract.get_crisis(scenario)["resolution_json"])["outcome"] == expected
+
+
+def test_enacted_sponsor_and_met_crisis_raise_legitimacy(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    advance_with_ai(contract, direct_vm, [
+        action(
+            "MERCHANTS",
+            "PROPOSE_LAW",
+            title="Delivery Schedule Rule",
+            law_text="Every faction may publish a public delivery schedule for its district.",
+            rationale="Set a measurable public duty that can be checked against the recorded action.",
+        ),
+        action("REFORMERS"),
+        action("TRADITIONALISTS"),
+    ])
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="Every faction may publish a public delivery schedule")
+    assert contract.certify_law(1) == "ADJUDICABLE"
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS"),
+        action("REFORMERS", stances=[{"law_id": 1, "stance": "SUPPORT"}]),
+        action("TRADITIONALISTS"),
+    ])
+    advance_with_ai(contract, direct_vm, [action(faction_id) for faction_id in FACTION_IDS])
+    assert contract.get_law(1)["status"] == "ENACTED"
+    assert contract.get_faction("MERCHANTS")["legitimacy"] == 6
+
+    direct_vm.clear_mocks()
+    mock_crisis(direct_vm)
+    assert contract.open_crisis() == 1
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS", "RESPOND_CRISIS", rationale=RESPONSE),
+        action("REFORMERS"),
+        action("TRADITIONALISTS"),
+    ])
+    advance_with_ai(contract, direct_vm, [action(faction_id) for faction_id in FACTION_IDS])
+    assert contract.get_crisis(1)["status"] == "JUDGING"
+
+    direct_vm.clear_mocks()
+    mock_crisis_judgment(direct_vm, RESPONSE, label="MET", quote=RESPONSE)
+    assert contract.judge_crisis_response(1, "MERCHANTS") == "MET"
+    assert contract.close_crisis(1) == "CONTAINED"
+    assert contract.get_faction("MERCHANTS")["legitimacy"] == 7

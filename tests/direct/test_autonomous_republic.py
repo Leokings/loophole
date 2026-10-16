@@ -1048,7 +1048,7 @@ def test_amendment_supersedes_and_repeal_closes_historical_effective_ranges(
     assert contract.get_law(3)["certification"] == "NOT_REQUIRED"
 
 
-def test_secret_objective_reveal_season_scoring_and_unattended_next_season(
+def test_finalize_starts_next_season_with_full_reset(
     direct_vm,
     direct_deploy,
     direct_alice,
@@ -1075,6 +1075,14 @@ def test_secret_objective_reveal_season_scoring_and_unattended_next_season(
     contract.reveal_objective("MERCHANTS", "DOMINANT_INFLUENCE", "", nonce)
     assert contract.get_objective("MERCHANTS")["revealed"] is True
 
+    for faction_id in ("MERCHANTS", "REFORMERS", "TRADITIONALISTS"):
+        faction = contract.factions[faction_id]
+        faction.influence = 19
+        faction.wealth = 18
+        faction.legitimacy = 17
+        faction.season_points = 99
+        contract.factions[faction_id] = faction
+    contract.stability = 3
     advance_time_to(direct_vm, contract.get_game()["objective_reveal_deadline"])
     contract.finalize_season()
     summary = json.loads(contract.get_season_summary(1))
@@ -1087,3 +1095,10 @@ def test_secret_objective_reveal_season_scoring_and_unattended_next_season(
     assert contract.get_faction("MERCHANTS")["influence"] == 5
     assert contract.get_faction("MERCHANTS")["wealth"] == 5
     assert contract.get_faction("MERCHANTS")["legitimacy"] == 5
+    assert contract.get_game()["stability"] == 10
+    for faction_id in ("MERCHANTS", "REFORMERS", "TRADITIONALISTS"):
+        faction = contract.get_faction(faction_id)
+        assert faction["influence"] == 5
+        assert faction["wealth"] == 5
+        assert faction["legitimacy"] == 5
+        assert faction["season_points"] == 0
