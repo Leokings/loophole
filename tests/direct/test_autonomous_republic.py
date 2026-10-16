@@ -80,6 +80,7 @@ def action(
     title="",
     law_text="",
     rationale="Build political capacity for the faction's long-term agenda.",
+    stances=None,
 ):
     return {
         "faction_id": faction_id,
@@ -89,24 +90,49 @@ def action(
         "law_title": title,
         "law_text": law_text,
         "rationale": rationale,
+        "stances": [] if stances is None else stances,
     }
 
 
 def mock_ai(direct_vm, actions):
+    choices = []
+    for item in actions:
+        action_type = item.get("action_type", "BUILD_INFLUENCE")
+        option_id = action_type
+        if action_type == "UNDERMINE":
+            option_id += ":" + item.get("target_faction_id", item.get("target", ""))
+        elif action_type in ("AMEND_LAW", "REPEAL_LAW", "VETO_LAW"):
+            option_id += ":" + str(item.get("target_law_id", item.get("law_id", 0)))
+        elif action_type == "RUN_FOR_OFFICE":
+            option_id += ":" + item.get("law_title", item.get("title", ""))
+        choices.append(
+            {
+                "faction_id": item["faction_id"],
+                "option_id": option_id,
+                "law_title": item.get("law_title", item.get("title", ""))
+                if action_type in ("PROPOSE_LAW", "PROPOSE_CHARTER", "AMEND_LAW")
+                else "",
+                "law_text": item.get("law_text", "")
+                if action_type in ("PROPOSE_LAW", "PROPOSE_CHARTER", "AMEND_LAW")
+                else "",
+                "rationale": item.get("rationale", "Build political capacity for the faction's long-term agenda."),
+                "stances": item.get("stances", []),
+            }
+        )
     direct_vm.mock_llm(
         r".*selecting CONSENSUS-CRITICAL actions for autonomous factions.*",
-        compact({"actions": actions}),
+        compact({"actions": choices}),
     )
 
 
 def mock_audit(direct_vm, accept=True):
     direct_vm.mock_llm(
         r".*Independently audit a CONSENSUS-CRITICAL batch of autonomous faction actions.*",
-        compact({"accept": accept}),
+        compact({"violations": [] if accept else [{"faction_id": "MERCHANTS", "code": "COLLUSION"}]}),
     )
 
 
-def mock_crisis(direct_vm, severity=2):
+def mock_crisis(direct_vm):
     direct_vm.mock_llm(
         r".*Create one consensus-critical political crisis for the Loophole game state.*",
         compact(
@@ -114,54 +140,38 @@ def mock_crisis(direct_vm, severity=2):
                 "title": "The Harbor Supply Shock",
                 "description": "A sudden collapse in harbor deliveries has created food shortages, commercial panic, and competing demands for emergency authority.",
                 "success_criterion": "Each response must name a concrete delivery step that fits the faction's public resources and can restore supplies.",
-                "severity": severity,
             }
         ),
     )
-
-
-def mock_crisis_scores(direct_vm, scores=(0, 0, 0)):
     direct_vm.mock_llm(
-        r".*Score the consensus-critical faction responses to this Loophole crisis.*",
-        compact(
-            {
-                "scores": [
-                    {
-                        "faction_id": faction_id,
-                        "score": scores[index],
-                        "reasoning": "The recorded response has the corresponding level of relevance and feasibility under the public standard.",
-                    }
-                    for index, faction_id in enumerate(
-                        ("MERCHANTS", "REFORMERS", "TRADITIONALISTS")
-                    )
-                ],
-                "summary": "The republic's combined plans were assessed consistently against supply restoration, public protection, and feasible faction capacity.",
-            }
-        ),
+        r".*Independently audit a proposed consensus-critical Loophole crisis.*",
+        compact({"label": "ACCEPT"}),
     )
 
 
-def set_world_mocks(direct_vm, actions, *, crisis_severity=2, crisis_scores=(0, 0, 0)):
+def mock_crisis_judgment(direct_vm, response_fragment, label="MET", quote=None):
+    response_quote = quote or response_fragment
+    direct_vm.mock_llm(
+        ".*" + response_fragment + ".*",
+        compact({"label": label, "quote": response_quote if label != "INSUFFICIENT" else ""}),
+    )
+
+
+def mock_law_certification(direct_vm, label="ADJUDICABLE", quote="Licensed merchants may trade"):
+    direct_vm.mock_llm(
+        r".*Decide whether one proposed Loophole law is adjudicable.*",
+        compact({"label": label, "quote": quote if label == "ADJUDICABLE" else ""}),
+    )
+
+
+def set_world_mocks(direct_vm, actions):
     direct_vm.clear_mocks()
     mock_ai(direct_vm, actions)
-    mock_crisis(direct_vm, crisis_severity)
-    mock_crisis_scores(direct_vm, crisis_scores)
+    mock_crisis(direct_vm)
 
 
-def advance_with_world_ai(
-    contract,
-    direct_vm,
-    actions,
-    *,
-    crisis_severity=2,
-    crisis_scores=(0, 0, 0),
-):
-    set_world_mocks(
-        direct_vm,
-        actions,
-        crisis_severity=crisis_severity,
-        crisis_scores=crisis_scores,
-    )
+def advance_with_world_ai(contract, direct_vm, actions):
+    set_world_mocks(direct_vm, actions)
     advance_time_to(direct_vm, contract.get_game()["reveal_deadline"])
     return contract.advance_round()
 
@@ -189,6 +199,7 @@ def claim_and_commit(
     title="",
     law_text="",
     rationale="Build political capacity for the faction's long-term agenda.",
+    stances_json="[]",
     nonce="private-nonce-0001",
 ):
     direct_vm.sender = controller
@@ -201,6 +212,7 @@ def claim_and_commit(
         title,
         law_text,
         rationale,
+        stances_json,
         nonce,
     )
     contract.commit_action(faction_id, commitment)
@@ -212,6 +224,7 @@ def claim_and_commit(
         "title": title,
         "law_text": law_text,
         "rationale": rationale,
+        "stances_json": stances_json,
         "nonce": nonce,
     }
 
@@ -226,6 +239,7 @@ def reveal(contract, direct_vm, controller, prepared):
         prepared["title"],
         prepared["law_text"],
         prepared["rationale"],
+        prepared["stances_json"],
         prepared["nonce"],
     )
 
@@ -496,7 +510,7 @@ def test_ai_can_create_a_bounded_law_proposal(direct_vm, direct_deploy):
     assert contract.get_faction("MERCHANTS")["influence"] == 3
 
 
-def test_human_and_ai_votes_can_enact_a_pending_law(
+def test_two_round_window_enacts_with_majority_stances(
     direct_vm,
     direct_deploy,
     direct_alice,
@@ -519,48 +533,50 @@ def test_human_and_ai_votes_can_enact_a_pending_law(
     )
     pending = contract.get_law(1)
     assert pending["status"] == "PENDING"
-    assert pending["closes_after_round"] == 2
+    assert pending["closes_after_round"] == 3
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="Licensed merchants may trade")
+    assert contract.certify_law(1) == "ADJUDICABLE"
 
     prepared = claim_and_commit(
         contract,
         direct_vm,
         direct_alice,
-        "MERCHANTS",
-        "SUPPORT_LAW",
-        law_id=1,
-        rationale="Support the coalition's trade reform and secure predictable market access.",
+        "REFORMERS",
+        "BUILD_INFLUENCE",
+        rationale="Build civic influence while supporting a clear, measurable trade rule.",
+        stances_json=compact([{"law_id": 1, "stance": "SUPPORT"}]),
         nonce="merchant-law-vote-01",
     )
+    influence_before_vote = contract.get_faction("REFORMERS")["influence"]
     advance_time_to(direct_vm, contract.get_game()["commit_deadline"])
     reveal(contract, direct_vm, direct_alice, prepared)
     advance_with_ai(
         contract,
         direct_vm,
         [
-            action(
-                "REFORMERS",
-                "SUPPORT_LAW",
-                law_id=1,
-                rationale="Support uniform rules that remove arbitrary local barriers for citizens.",
-            ),
+            action("MERCHANTS"),
             action(
                 "TRADITIONALISTS",
-                "OPPOSE_LAW",
-                law_id=1,
+                stances=[{"law_id": 1, "stance": "OPPOSE"}],
                 rationale="Oppose a rapid removal of district powers protected by the old charter.",
             ),
         ],
     )
+    assert contract.get_round_action(2, "REFORMERS")["action_type"] == "BUILD_INFLUENCE"
+    assert contract.get_faction("REFORMERS")["influence"] == influence_before_vote + 2
+
+    advance_with_ai(contract, direct_vm, [action("MERCHANTS"), action("TRADITIONALISTS")])
 
     law = contract.get_law(1)
-    summary = json.loads(contract.get_round_summary(2))
+    summary = json.loads(contract.get_round_summary(3))
     assert law["status"] == "ENACTED"
     assert law["support_votes"] == 2
     assert law["oppose_votes"] == 1
-    assert law["resolved_round"] == 2
+    assert law["resolved_round"] == 3
     assert contract.get_game()["enacted_law_count"] == 1
     assert summary["law_resolutions"] == [
-        {"law_id": 1, "oppose_votes": 1, "status": "ENACTED", "support_votes": 2}
+        {"law_id": 1, "oppose_votes": 1, "reason": "", "status": "ENACTED", "support_votes": 2}
     ]
 
 
@@ -581,30 +597,27 @@ def test_majority_opposition_rejects_a_pending_law(direct_vm, direct_deploy):
             action("TRADITIONALISTS", "GROW_WEALTH"),
         ],
     )
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="Commercial guilds may charge unrestricted tolls")
+    contract.certify_law(1)
     advance_with_ai(
         contract,
         direct_vm,
         [
-            action(
-                "MERCHANTS",
-                "SUPPORT_LAW",
-                law_id=1,
-                rationale="Defend the coalition's plan to finance gates through commercial tolls.",
-            ),
+            action("MERCHANTS", "GROW_WEALTH"),
             action(
                 "REFORMERS",
-                "OPPOSE_LAW",
-                law_id=1,
+                stances=[{"law_id": 1, "stance": "OPPOSE"}],
                 rationale="Prevent unrestricted tolls from excluding citizens from essential routes.",
             ),
             action(
                 "TRADITIONALISTS",
-                "OPPOSE_LAW",
-                law_id=1,
+                stances=[{"law_id": 1, "stance": "OPPOSE"}],
                 rationale="Protect the charter's established public authority over the city gates.",
             ),
         ],
     )
+    advance_with_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
 
     law = contract.get_law(1)
     assert law["status"] == "REJECTED"
@@ -630,6 +643,7 @@ def test_law_expires_without_majority_or_opposition(direct_vm, direct_deploy):
             action("TRADITIONALISTS", "GROW_WEALTH"),
         ],
     )
+    advance_with_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
     advance_with_ai(
         contract,
         direct_vm,
@@ -642,24 +656,26 @@ def test_law_expires_without_majority_or_opposition(direct_vm, direct_deploy):
 
     law = contract.get_law(1)
     assert law["status"] == "EXPIRED"
-    assert law["support_votes"] == 0
+    assert law["support_votes"] == 1
     assert law["oppose_votes"] == 0
     assert contract.get_game()["expired_law_count"] == 1
 
 
-def test_closed_ai_schema_rejects_invented_effects(direct_vm, direct_deploy):
+def test_one_invalid_ai_entry_falls_back_only_that_faction(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
-    invalid = action("MERCHANTS")
-    invalid["minted_wealth"] = 999999
-    mock_ai(
-        direct_vm,
-        [invalid, action("REFORMERS"), action("TRADITIONALISTS")],
+    direct_vm.mock_llm(
+        r".*selecting CONSENSUS-CRITICAL actions for autonomous factions.*",
+        compact({"actions": [
+            {"faction_id": "MERCHANTS", "option_id": "NOT_IN_MENU", "law_title": "", "law_text": "", "rationale": "Build a bounded strategy for the merchants.", "stances": []},
+            {"faction_id": "REFORMERS", "option_id": "BUILD_INFLUENCE", "law_title": "", "law_text": "", "rationale": "Build civic capacity for a later public reform.", "stances": []},
+            {"faction_id": "TRADITIONALISTS", "option_id": "GROW_WEALTH", "law_title": "", "law_text": "", "rationale": "Preserve resources for continuity during the coming round.", "stances": []},
+        ]}),
     )
+    mock_audit(direct_vm)
     advance_time_to(direct_vm, contract.get_game()["reveal_deadline"])
-
-    with direct_vm.expect_revert("[LLM_ERROR] AI_ACTION_FIELDS"):
-        contract.advance_round()
-    assert contract.get_game()["round_number"] == 1
+    contract.advance_round()
+    assert contract.get_round_action(1, "MERCHANTS")["source"] == "AI_FALLBACK"
+    assert contract.get_round_action(1, "REFORMERS")["action_type"] == "BUILD_INFLUENCE"
 
 
 def test_validator_requires_positive_independent_audit(direct_vm, direct_deploy):
@@ -811,18 +827,23 @@ def test_round_three_election_is_populated_without_human_voters(direct_vm, direc
     assert contract.get_office("TREASURER")["holder_faction_id"] == "MERCHANTS"
     assert contract.get_office("EXECUTIVE")["holder_faction_id"] == "REFORMERS"
     assert contract.get_office("SPEAKER")["holder_faction_id"] == "TRADITIONALISTS"
-    assert contract.get_game()["active_crisis_id"] == 1
+    assert contract.get_game()["active_crisis_id"] == 0
+    assert contract.get_game()["crisis_open_round"] == 4
     assert json.loads(contract.get_round_summary(3))["election_results"]
 
 
-def test_crisis_generation_responses_and_consensus_scoring_change_world_state(
+def test_crisis_generation_responses_and_narrow_judgments_change_world_state(
     direct_vm,
     direct_deploy,
 ):
     contract = deploy_republic(direct_vm, direct_deploy)
     basic = [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")]
     for _ in range(3):
-        advance_with_world_ai(contract, direct_vm, basic, crisis_severity=2)
+        advance_with_world_ai(contract, direct_vm, basic)
+
+    direct_vm.clear_mocks()
+    mock_crisis(direct_vm)
+    assert contract.open_crisis() == 1
 
     crisis = contract.get_crisis(1)
     assert crisis["status"] == "ACTIVE"
@@ -846,16 +867,26 @@ def test_crisis_generation_responses_and_consensus_scoring_change_world_state(
             rationale="Mobilize chartered ward officers to secure routes and coordinate established granaries.",
         ),
     ]
-    advance_with_world_ai(contract, direct_vm, responses, crisis_scores=(3, 3, 3))
+    advance_with_world_ai(contract, direct_vm, responses)
+    advance_with_world_ai(contract, direct_vm, basic)
+    assert contract.get_crisis(1)["status"] == "JUDGING"
+    direct_vm.clear_mocks()
+    mock_crisis_judgment(direct_vm, "Finance convoy guarantees", quote="Finance convoy guarantees and temporary harbor credit")
+    contract.judge_crisis_response(1, "MERCHANTS")
+    direct_vm.clear_mocks()
+    mock_crisis_judgment(direct_vm, "Open protected district depots", quote="Open protected district depots and publish a ration schedule")
+    contract.judge_crisis_response(1, "REFORMERS")
+    direct_vm.clear_mocks()
+    mock_crisis_judgment(direct_vm, "Mobilize chartered ward officers", quote="Mobilize chartered ward officers to secure routes")
+    contract.judge_crisis_response(1, "TRADITIONALISTS")
     stability_before_resolution = contract.get_game()["stability"]
-    advance_with_world_ai(contract, direct_vm, basic, crisis_scores=(3, 3, 3))
+    assert contract.close_crisis(1) == "RESOLVED"
 
     resolved = contract.get_crisis(1)
     resolution = json.loads(resolved["resolution_json"])
     assert resolved["status"] == "RESOLVED"
-    assert resolved["total_response_score"] == 9
     assert resolution["outcome"] == "RESOLVED"
-    assert contract.get_game()["stability"] == min(20, stability_before_resolution + 2)
+    assert contract.get_game()["stability"] == min(20, stability_before_resolution + 1)
     assert contract.get_faction("MERCHANTS")["crises_resolved"] == 1
 
 
@@ -880,23 +911,28 @@ def test_executive_can_veto_a_statute_during_its_bounded_window(
             action("TRADITIONALISTS"),
         ],
     )
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="All harbor imports must pay a temporary emergency tariff")
+    contract.certify_law(1)
     advance_with_world_ai(
         contract,
         direct_vm,
         [
-            action("MERCHANTS", "SUPPORT_LAW", law_id=1, rationale="Support the tariff as a predictable emergency funding source."),
-            action("REFORMERS", "SUPPORT_LAW", law_id=1, rationale="Support temporary funding when its use remains publicly accountable."),
-            action("TRADITIONALISTS", "OPPOSE_LAW", law_id=1, rationale="Oppose bypassing the charter's established district revenue powers."),
+            action("MERCHANTS"),
+            action("REFORMERS", stances=[{"law_id": 1, "stance": "SUPPORT"}]),
+            action("TRADITIONALISTS", stances=[{"law_id": 1, "stance": "OPPOSE"}]),
         ],
     )
-    assert contract.get_law(1)["effective_from_round"] == 4
-    assert contract.get_law(1)["veto_deadline_round"] == 3
+    advance_with_world_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
+    assert contract.get_law(1)["effective_from_round"] == 5
+    assert contract.get_law(1)["veto_deadline_round"] == 4
 
+    executive_faction = contract.get_office("EXECUTIVE")["holder_faction_id"]
     prepared = claim_and_commit(
         contract,
         direct_vm,
         direct_alice,
-        "MERCHANTS",
+        executive_faction,
         "VETO_LAW",
         law_id=1,
         rationale="Use the executive veto before effectiveness because the tariff threatens commercial recovery.",
@@ -935,15 +971,19 @@ def test_amendment_supersedes_and_repeal_closes_historical_effective_ranges(
             action("TRADITIONALISTS"),
         ],
     )
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="Every recognized faction may petition public institutions")
+    contract.certify_law(1)
     advance_with_world_ai(
         contract,
         direct_vm,
         [
-            action("MERCHANTS", "SUPPORT_LAW", law_id=1, rationale="Support equal access to institutional petition channels."),
-            action("REFORMERS", "SUPPORT_LAW", law_id=1, rationale="Support constitutional protection for political participation."),
-            action("TRADITIONALISTS", "SUPPORT_LAW", law_id=1, rationale="Support a clear charter rule administered through existing institutions."),
+            action("MERCHANTS"),
+            action("REFORMERS", stances=[{"law_id": 1, "stance": "SUPPORT"}]),
+            action("TRADITIONALISTS", stances=[{"law_id": 1, "stance": "SUPPORT"}]),
         ],
     )
+    advance_with_world_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
     advance_with_world_ai(
         contract,
         direct_vm,
@@ -960,19 +1000,23 @@ def test_amendment_supersedes_and_repeal_closes_historical_effective_ranges(
             action("TRADITIONALISTS"),
         ],
     )
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="Every recognized faction may petition institutions")
+    contract.certify_law(2)
     advance_with_world_ai(
         contract,
         direct_vm,
         [
-            action("MERCHANTS", "SUPPORT_LAW", law_id=2, rationale="Support a predictable hearing process for institutional petitions."),
-            action("REFORMERS", "SUPPORT_LAW", law_id=2, rationale="Support an enforceable hearing right alongside the petition guarantee."),
-            action("TRADITIONALISTS", "SUPPORT_LAW", law_id=2, rationale="Support a hearing process delivered through established public offices."),
+            action("MERCHANTS", stances=[{"law_id": 2, "stance": "SUPPORT"}]),
+            action("REFORMERS"),
+            action("TRADITIONALISTS", stances=[{"law_id": 2, "stance": "SUPPORT"}]),
         ],
     )
+    advance_with_world_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
     assert contract.get_law(1)["status"] == "SUPERSEDED"
-    assert contract.get_law(1)["effective_until_round"] == 4
+    assert contract.get_law(1)["effective_until_round"] == 6
     assert contract.get_law(2)["status"] == "ENACTED"
-    assert contract.get_law(2)["effective_from_round"] == 5
+    assert contract.get_law(2)["effective_from_round"] == 7
 
     advance_with_world_ai(
         contract,
@@ -987,20 +1031,21 @@ def test_amendment_supersedes_and_repeal_closes_historical_effective_ranges(
             ),
             action("TRADITIONALISTS"),
         ],
-        crisis_scores=(0, 0, 0),
     )
     advance_with_world_ai(
         contract,
         direct_vm,
         [
-            action("MERCHANTS", "SUPPORT_LAW", law_id=3, rationale="Support repeal to remove the captured hearing process."),
-            action("REFORMERS", "SUPPORT_LAW", law_id=3, rationale="Support replacement of a process that no longer protects civic participation."),
-            action("TRADITIONALISTS", "OPPOSE_LAW", law_id=3, rationale="Oppose repeal without a replacement grounded in the inherited charter."),
+            action("MERCHANTS", stances=[{"law_id": 3, "stance": "SUPPORT"}]),
+            action("REFORMERS"),
+            action("TRADITIONALISTS", stances=[{"law_id": 3, "stance": "OPPOSE"}]),
         ],
     )
+    advance_with_world_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
     assert contract.get_law(2)["status"] == "REPEALED"
-    assert contract.get_law(2)["effective_until_round"] == 6
+    assert contract.get_law(2)["effective_until_round"] == 9
     assert contract.get_law(3)["law_kind"] == "REPEAL"
+    assert contract.get_law(3)["certification"] == "NOT_REQUIRED"
 
 
 def test_secret_objective_reveal_season_scoring_and_unattended_next_season(
@@ -1035,9 +1080,10 @@ def test_secret_objective_reveal_season_scoring_and_unattended_next_season(
     summary = json.loads(contract.get_season_summary(1))
     merchant = next(item for item in summary["standings"] if item["faction_id"] == "MERCHANTS")
     assert merchant["objective_points"] == 5
-    assert contract.get_game()["season_status"] == "FINAL"
-
-    assert contract.start_next_season() == 2
     assert contract.get_game()["season_status"] == "ACTIVE"
+    assert contract.get_game()["season_number"] == 2
     assert contract.get_game()["round_number"] == 9
     assert contract.get_game()["season_end_round"] == 16
+    assert contract.get_faction("MERCHANTS")["influence"] == 5
+    assert contract.get_faction("MERCHANTS")["wealth"] == 5
+    assert contract.get_faction("MERCHANTS")["legitimacy"] == 5

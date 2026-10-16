@@ -2,22 +2,26 @@
   {
     "id": "MERCHANTS",
     "name": "Merchant Coalition",
-    "doctrine": "Increase private wealth, weaken costly restrictions, and preserve commercial stability."
+    "doctrine": "Increase private wealth, weaken costly restrictions, and preserve commercial stability.",
+    "fallback_action": "GROW_WEALTH"
   },
   {
     "id": "REFORMERS",
     "name": "Civic Reformers",
-    "doctrine": "Improve legitimacy, protect ordinary citizens, and constrain concentrated political power."
+    "doctrine": "Improve legitimacy, protect ordinary citizens, and constrain concentrated political power.",
+    "fallback_action": "BUILD_INFLUENCE"
   },
   {
     "id": "TRADITIONALISTS",
     "name": "Old Charter League",
-    "doctrine": "Defend institutional continuity, existing law, and a stable constitutional order."
+    "doctrine": "Defend institutional continuity, existing law, and a stable constitutional order.",
+    "fallback_action": "BUILD_INFLUENCE"
   },
   {
     "id": "REVOLUTIONARIES",
     "name": "New Dawn Movement",
-    "doctrine": "Replace entrenched institutions, expose elite capture, and force rapid constitutional change."
+    "doctrine": "Replace entrenched institutions, expose elite capture, and force rapid constitutional change.",
+    "fallback_action": "BUILD_INFLUENCE"
   }
 ]
 
