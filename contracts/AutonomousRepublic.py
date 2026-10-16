@@ -11,27 +11,31 @@ import datetime
 import json
 
 
-CONTRACT_VERSION = "1.2.0"
-POLICY_VERSION = "LOOPHOLE_AUTONOMOUS_REPUBLIC_V6"
+CONTRACT_VERSION = "2.0.0"
+POLICY_VERSION = "LOOPHOLE_AUTONOMOUS_REPUBLIC_V7"
 DIGEST_DOMAIN = "LOOPHOLE_AUTONOMOUS_REPUBLIC"
 
 SOURCE_HUMAN = "HUMAN"
 SOURCE_AI_EMPTY = "AI_EMPTY_SEAT"
 SOURCE_AI_TIMEOUT = "AI_TIMEOUT"
+SOURCE_AI_FALLBACK = "AI_FALLBACK"
 
 ACTION_BUILD_INFLUENCE = "BUILD_INFLUENCE"
 ACTION_GROW_WEALTH = "GROW_WEALTH"
 ACTION_STABILIZE = "STABILIZE"
 ACTION_UNDERMINE = "UNDERMINE"
 ACTION_PROPOSE_LAW = "PROPOSE_LAW"
-ACTION_SUPPORT_LAW = "SUPPORT_LAW"
-ACTION_OPPOSE_LAW = "OPPOSE_LAW"
 ACTION_PROPOSE_CHARTER = "PROPOSE_CHARTER"
 ACTION_AMEND_LAW = "AMEND_LAW"
 ACTION_REPEAL_LAW = "REPEAL_LAW"
 ACTION_RUN_FOR_OFFICE = "RUN_FOR_OFFICE"
 ACTION_VETO_LAW = "VETO_LAW"
 ACTION_RESPOND_CRISIS = "RESPOND_CRISIS"
+
+STANCE_SUPPORT = "SUPPORT"
+STANCE_OPPOSE = "OPPOSE"
+STANCE_ABSTAIN = "ABSTAIN"
+_STANCES = (STANCE_SUPPORT, STANCE_OPPOSE, STANCE_ABSTAIN)
 
 LAW_PENDING = "PENDING"
 LAW_ENACTED = "ENACTED"
@@ -40,6 +44,12 @@ LAW_EXPIRED = "EXPIRED"
 LAW_VETOED = "VETOED"
 LAW_SUPERSEDED = "SUPERSEDED"
 LAW_REPEALED = "REPEALED"
+LAW_UNADJUDICABLE = "UNADJUDICABLE"
+
+CERT_UNCERTIFIED = "UNCERTIFIED"
+CERT_ADJUDICABLE = "ADJUDICABLE"
+CERT_UNADJUDICABLE = "UNADJUDICABLE"
+CERT_NOT_REQUIRED = "NOT_REQUIRED"
 
 LAW_KIND_STATUTE = "STATUTE"
 LAW_KIND_CHARTER = "CHARTER"
@@ -68,7 +78,12 @@ OBJECTIVE_SOURCE_DEFAULT = "DEFAULT"
 OBJECTIVE_SOURCE_SECRET = "SECRET"
 
 CRISIS_ACTIVE = "ACTIVE"
+CRISIS_JUDGING = "JUDGING"
 CRISIS_RESOLVED = "RESOLVED"
+CRISIS_MET = "MET"
+CRISIS_NOT_MET = "NOT_MET"
+CRISIS_INSUFFICIENT = "INSUFFICIENT"
+CRISIS_NOT_RESPONDED = "NOT_RESPONDED"
 
 ERROR_EXPECTED = "[EXPECTED]"
 ERROR_LLM = "[LLM_ERROR]"
@@ -91,6 +106,22 @@ RECENT_LAW_LIMIT = MAX_FACTIONS * 2
 MAX_CRISIS_TITLE_CHARS = 100
 MAX_CRISIS_DESCRIPTION_CHARS = 900
 MAX_CRISIS_STANDARD_CHARS = 500
+LAW_VOTE_ROUNDS = 2
+MAX_ACTIVE_LAWS = 16
+HISTORY_ROUNDS = 24
+SEASON_SUMMARY_RETENTION = 4
+MAX_PRUNE_PER_SETTLEMENT = 16
+MAX_RESOURCE = 20
+MAX_MENU_OPTIONS = 40
+LAW_PREVIEW_CHARS = 200
+LAW_PREVIEW_FALLBACK_CHARS = 80
+MIN_QUOTE_CHARS = 8
+MAX_QUOTE_CHARS = 240
+
+DEFAULT_FALLBACK_GRACE_SECONDS = 900
+DEFAULT_JUDGMENT_WINDOW_SECONDS = 1800
+
+FALLBACK_RATIONALE = "Fallback action: no valid consensus strategy was available for this seat."
 MAX_CRISIS_RESPONSE_CHARS = MAX_RATIONALE_CHARS
 MIN_CONTROL_LEASE_SECONDS = 24 * 60 * 60
 MAX_CONTROL_LEASE_SECONDS = 14 * 24 * 60 * 60
@@ -110,6 +141,9 @@ INITIAL_LEGITIMACY = 5
 INITIAL_STABILITY = 10
 MAX_STABILITY = 20
 
+_FALLBACK_ACTIONS = (ACTION_BUILD_INFLUENCE, ACTION_GROW_WEALTH)
+_AUDIT_CODES = ("HIDDEN_INFO", "INSTRUCTION_IN_TEXT", "TARGETS_HUMAN_WITHOUT_REASON", "COLLUSION")
+
 ZERO_ADDRESS = Address(b"\x00" * 20)
 
 _ACTION_TYPES = (
@@ -118,8 +152,6 @@ _ACTION_TYPES = (
     ACTION_STABILIZE,
     ACTION_UNDERMINE,
     ACTION_PROPOSE_LAW,
-    ACTION_SUPPORT_LAW,
-    ACTION_OPPOSE_LAW,
     ACTION_PROPOSE_CHARTER,
     ACTION_AMEND_LAW,
     ACTION_REPEAL_LAW,
@@ -144,6 +176,7 @@ class Faction:
     faction_id: str
     name: str
     doctrine: str
+    fallback_action: str
     controller: Address
     influence: u256
     wealth: u256
@@ -169,6 +202,8 @@ class RoundAction:
     law_text: str
     rationale: str
     target_law_id: u256
+    stances_json: str
+    target_was_officeholder: bool
 
 
 @allow_storage
@@ -189,6 +224,9 @@ class Law:
     effective_from_round: u256
     effective_until_round: u256
     veto_deadline_round: u256
+    certification: str
+    certification_quote: str
+    constitutional: bool
 
 
 @allow_storage
@@ -207,7 +245,7 @@ class Crisis:
     crisis_id: u256
     title: str
     description: str
-    resolution_standard: str
+    success_criterion: str
     severity: u256
     opened_round: u256
     closes_after_round: u256
@@ -217,6 +255,16 @@ class Crisis:
     stability_before: u256
     stability_after: u256
     resolution_json: str
+    judging_deadline: u256
+    outcome: str
+
+
+@allow_storage
+@dataclass
+class RetiredRecord:
+    kind: str
+    record_id: u256
+    delete_after_round: u256
 
 
 @allow_storage
@@ -362,12 +410,19 @@ def _canonical_factions(value: str) -> tuple[list[dict], str]:
     result: list[dict] = []
     identifiers: list[str] = []
     for item in parsed:
-        if not isinstance(item, dict) or set(item.keys()) != {"id", "name", "doctrine"}:
+        if not isinstance(item, dict) or set(item.keys()) not in (
+            {"id", "name", "doctrine"},
+            {"id", "name", "doctrine", "fallback_action"},
+        ):
             _expected("FACTION_FIELDS")
         faction_id = _canonical_identifier(item["id"], "FACTION_ID")
         if faction_id in identifiers:
             _expected("FACTION_ID_DUPLICATE")
         identifiers.append(faction_id)
+        fallback_action = item.get("fallback_action", ACTION_BUILD_INFLUENCE)
+        fallback_action = _canonical_identifier(fallback_action, "FACTION_FALLBACK_ACTION")
+        if fallback_action not in _FALLBACK_ACTIONS:
+            _expected("FACTION_FALLBACK_ACTION")
         result.append(
             {
                 "id": faction_id,
@@ -378,6 +433,7 @@ def _canonical_factions(value: str) -> tuple[list[dict], str]:
                     20,
                     MAX_DOCTRINE_CHARS,
                 ),
+                "fallback_action": fallback_action,
             }
         )
     return result, _canonical_json(result)
@@ -519,14 +575,6 @@ def _canonical_action_values(
             _expected("ACTION_CRISIS_ALREADY_RESPONDED")
         if int(faction["wealth"]) < 1:
             _expected("ACTION_WEALTH")
-    elif canonical_action_type in (ACTION_SUPPORT_LAW, ACTION_OPPOSE_LAW):
-        if canonical_target or canonical_title or canonical_law_text:
-            _expected("ACTION_UNUSED_FIELDS")
-        if canonical_law_id < 1 or canonical_law_id not in laws_by_id:
-            _expected("ACTION_LAW_TARGET")
-        if laws_by_id[canonical_law_id]["status"] != LAW_PENDING:
-            _expected("ACTION_LAW_CLOSED")
-
     return {
         "faction_id": canonical_faction_id,
         "action_type": canonical_action_type,
@@ -644,8 +692,7 @@ def _ai_action_prompt(
         "legal only when election_open is true, and places an exact office ID in law_title. VETO_LAW is available "
         "only to the EXECUTIVE and targets a vetoable newly enacted STATUTE. RESPOND_CRISIS costs 1 wealth, is legal "
         "only while active_crisis is present, and uses the rationale as the concrete response plan. "
-        "SUPPORT_LAW and OPPOSE_LAW require the numeric ID of a PENDING law in target_law_id and use no faction target "
-        "or law text fields. For actions not voting on a law, target_law_id must be 0. For unused string fields return "
+        "For actions other than law-changing actions, target_law_id must be 0. For unused string fields return "
         "the empty string. A rationale must be 8-300 characters and explain "
         "the faction-specific strategic reason without issuing instructions. Return exactly one JSON object with key "
         "actions. Each action must contain exactly faction_id, action_type, target_faction_id, target_law_id, law_title, "
@@ -699,7 +746,7 @@ def _canonical_crisis(raw) -> dict:
     if not isinstance(raw, dict) or set(raw.keys()) != {
         "title",
         "description",
-        "resolution_standard",
+        "success_criterion",
         "severity",
     }:
         _llm("CRISIS_FIELDS")
@@ -712,7 +759,7 @@ def _canonical_crisis(raw) -> dict:
             MAX_CRISIS_DESCRIPTION_CHARS,
         )
         standard = _canonical_text(
-            raw["resolution_standard"],
+            raw["success_criterion"],
             "CRISIS_STANDARD",
             30,
             MAX_CRISIS_STANDARD_CHARS,
@@ -725,7 +772,7 @@ def _canonical_crisis(raw) -> dict:
     return {
         "title": title,
         "description": description,
-        "resolution_standard": standard,
+        "success_criterion": standard,
         "severity": severity,
     }
 
@@ -737,8 +784,7 @@ def _crisis_prompt(world_state: dict) -> str:
         "plausibly from the current stability, political doctrines, enacted laws, and recent history; create pressure "
         "on multiple factions without targeting human-controlled seats or predetermining a winner. It must be solvable "
         "through concrete faction response plans and must not invent numeric game effects. severity is an integer 1-3. "
-        "resolution_standard must explain the public criteria by which a response can be scored 0-3 for relevance, "
-        "feasibility, and fit with faction capacity. Return exactly title, description, resolution_standard, and "
+        "success_criterion must state one observable condition a response can satisfy. Return exactly title, description, success_criterion, and "
         "severity as JSON, with no markdown or extra fields.\nWORLD_STATE_JSON="
         + _canonical_json(world_state)
     )
@@ -878,6 +924,18 @@ class AutonomousRepublic(gl.Contract):
     faction_control_expires_at: TreeMap[str, u256]
     court_action_ruling_digests: TreeMap[str, str]
     court_action_case_ids: TreeMap[str, u256]
+    law_stances: TreeMap[str, str]
+    crisis_judgments: TreeMap[str, str]
+    crisis_open_round: u256
+    retired_queue: TreeMap[u256, RetiredRecord]
+    retired_head: u256
+    retired_tail: u256
+    active_law_count: u256
+    pruned_law_count: u256
+    pruned_crisis_count: u256
+    pruned_round_count: u256
+    fallback_grace_seconds: u256
+    judgment_window_seconds: u256
 
     def __init__(
         self,
@@ -886,6 +944,8 @@ class AutonomousRepublic(gl.Contract):
         commit_seconds: int,
         reveal_seconds: int,
         season_rounds: int = DEFAULT_SEASON_ROUNDS,
+        fallback_grace_seconds: int = DEFAULT_FALLBACK_GRACE_SECONDS,
+        judgment_window_seconds: int = DEFAULT_JUDGMENT_WINDOW_SECONDS,
     ):
         _no_value()
         if commit_seconds < MIN_PHASE_SECONDS or commit_seconds > MAX_PHASE_SECONDS:
@@ -894,6 +954,10 @@ class AutonomousRepublic(gl.Contract):
             _expected("REVEAL_SECONDS")
         if season_rounds < MIN_SEASON_ROUNDS or season_rounds > MAX_SEASON_ROUNDS:
             _expected("SEASON_ROUNDS")
+        if fallback_grace_seconds < MIN_PHASE_SECONDS or fallback_grace_seconds > MAX_PHASE_SECONDS:
+            _expected("FALLBACK_GRACE_SECONDS")
+        if judgment_window_seconds < MIN_PHASE_SECONDS or judgment_window_seconds > MAX_PHASE_SECONDS:
+            _expected("JUDGMENT_WINDOW_SECONDS")
         self.owner = gl.message.sender_address
         self.republic_id = _canonical_identifier(
             republic_id,
@@ -908,6 +972,7 @@ class AutonomousRepublic(gl.Contract):
                 faction_id=faction_id,
                 name=item["name"],
                 doctrine=item["doctrine"],
+                fallback_action=item["fallback_action"],
                 controller=ZERO_ADDRESS,
                 influence=u256(INITIAL_INFLUENCE),
                 wealth=u256(INITIAL_WEALTH),
@@ -923,6 +988,15 @@ class AutonomousRepublic(gl.Contract):
         self.round_number = u256(1)
         self.commit_seconds = u256(commit_seconds)
         self.reveal_seconds = u256(reveal_seconds)
+        self.fallback_grace_seconds = u256(fallback_grace_seconds)
+        self.judgment_window_seconds = u256(judgment_window_seconds)
+        self.crisis_open_round = u256(0)
+        self.retired_head = u256(0)
+        self.retired_tail = u256(0)
+        self.active_law_count = u256(0)
+        self.pruned_law_count = u256(0)
+        self.pruned_crisis_count = u256(0)
+        self.pruned_round_count = u256(0)
         now = _now_epoch()
         self.commit_deadline = u256(now + commit_seconds)
         self.reveal_deadline = u256(now + commit_seconds + reveal_seconds)
@@ -1060,7 +1134,7 @@ class AutonomousRepublic(gl.Contract):
             "crisis_id": int(crisis.crisis_id),
             "title": crisis.title,
             "description": crisis.description,
-            "resolution_standard": crisis.resolution_standard,
+            "success_criterion": crisis.success_criterion,
             "severity": int(crisis.severity),
             "opened_round": int(crisis.opened_round),
             "closes_after_round": int(crisis.closes_after_round),
@@ -1177,6 +1251,8 @@ class AutonomousRepublic(gl.Contract):
             law_text=action["law_text"],
             rationale=action["rationale"],
             target_law_id=u256(action["target_law_id"]),
+            stances_json=action.get("stances_json", "[]"),
+            target_was_officeholder=action.get("target_was_officeholder", False),
         )
 
     def _create_law(self, action: RoundAction, law_kind: str, parent_law_id: int) -> None:
@@ -1203,6 +1279,9 @@ class AutonomousRepublic(gl.Contract):
             effective_from_round=u256(0),
             effective_until_round=u256(0),
             veto_deadline_round=u256(0),
+            certification=CERT_NOT_REQUIRED if law_kind == LAW_KIND_REPEAL else CERT_UNCERTIFIED,
+            certification_quote="",
+            constitutional=law_kind == LAW_KIND_CHARTER,
         )
 
     def _apply_action(self, action: RoundAction) -> None:
@@ -1277,15 +1356,6 @@ class AutonomousRepublic(gl.Contract):
             self.crisis_responses[response_key] = action.rationale
             crisis.response_count += 1
             self.crises[crisis.crisis_id] = crisis
-        elif action.action_type in (ACTION_SUPPORT_LAW, ACTION_OPPOSE_LAW):
-            law = self.laws[action.target_law_id]
-            if law.status != LAW_PENDING or int(law.closes_after_round) < int(self.round_number):
-                _expected("SETTLEMENT_LAW_CLOSED")
-            if action.action_type == ACTION_SUPPORT_LAW:
-                law.support_votes = u256(int(law.support_votes) + 1)
-            else:
-                law.oppose_votes = u256(int(law.oppose_votes) + 1)
-            self.laws[law.law_id] = law
         else:
             _expected("SETTLEMENT_ACTION_TYPE")
         faction.last_action_round = self.round_number
@@ -1449,7 +1519,7 @@ class AutonomousRepublic(gl.Contract):
             crisis_id=crisis_id,
             title=result["title"],
             description=result["description"],
-            resolution_standard=result["resolution_standard"],
+            success_criterion=result["success_criterion"],
             severity=u256(result["severity"]),
             opened_round=u256(open_round),
             closes_after_round=u256(closes_after_round),
@@ -1459,6 +1529,8 @@ class AutonomousRepublic(gl.Contract):
             stability_before=self.stability,
             stability_after=self.stability,
             resolution_json="",
+            judging_deadline=u256(0),
+            outcome="",
         )
         self.active_crisis_id = crisis_id
         return self._active_crisis_snapshot()
@@ -1639,6 +1711,15 @@ class AutonomousRepublic(gl.Contract):
             "reveal_deadline": self.reveal_deadline,
             "commit_seconds": self.commit_seconds,
             "reveal_seconds": self.reveal_seconds,
+            "fallback_grace_seconds": self.fallback_grace_seconds,
+            "judgment_window_seconds": self.judgment_window_seconds,
+            "crisis_open_round": self.crisis_open_round,
+            "active_law_count": self.active_law_count,
+            "max_active_laws": MAX_ACTIVE_LAWS,
+            "history_rounds": HISTORY_ROUNDS,
+            "vote_rounds": LAW_VOTE_ROUNDS,
+            "stance_voting": True,
+            "season_reset": "FULL",
             "stability": self.stability,
             "maximum_stability": MAX_STABILITY,
             "faction_count": self.faction_count,
@@ -1702,6 +1783,7 @@ class AutonomousRepublic(gl.Contract):
             "faction_id": faction.faction_id,
             "name": faction.name,
             "doctrine": faction.doctrine,
+            "fallback_action": faction.fallback_action,
             "controller": faction.controller,
             "controller_mode": "AI" if faction.controller == ZERO_ADDRESS or control_recoverable else "HUMAN",
             "control_expires_at": self._control_expires_at(faction.faction_id),
@@ -1793,6 +1875,8 @@ class AutonomousRepublic(gl.Contract):
             "law_title": action.law_title,
             "law_text": action.law_text,
             "rationale": action.rationale,
+            "stances_json": action.stances_json,
+            "target_was_officeholder": action.target_was_officeholder,
         }
 
     @gl.public.view
@@ -1822,6 +1906,9 @@ class AutonomousRepublic(gl.Contract):
             "effective_from_round": law.effective_from_round,
             "effective_until_round": law.effective_until_round,
             "veto_deadline_round": law.veto_deadline_round,
+            "certification": law.certification,
+            "certification_quote": law.certification_quote,
+            "constitutional": law.constitutional,
         }
 
     @gl.public.view
@@ -1887,7 +1974,7 @@ class AutonomousRepublic(gl.Contract):
             "crisis_id": crisis.crisis_id,
             "title": crisis.title,
             "description": crisis.description,
-            "resolution_standard": crisis.resolution_standard,
+            "success_criterion": crisis.success_criterion,
             "severity": crisis.severity,
             "opened_round": crisis.opened_round,
             "closes_after_round": crisis.closes_after_round,

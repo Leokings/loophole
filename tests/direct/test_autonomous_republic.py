@@ -49,6 +49,8 @@ def deploy_republic(
     commit_seconds=60,
     reveal_seconds=60,
     season_rounds=None,
+    fallback_grace_seconds=None,
+    judgment_window_seconds=None,
     transferred_value=0,
 ):
     setup_sdk_paths(CONTRACT_PATH, "v0.2.16")
@@ -60,8 +62,12 @@ def deploy_republic(
         commit_seconds,
         reveal_seconds,
     ]
-    if season_rounds is not None:
-        args.append(season_rounds)
+    if season_rounds is not None or fallback_grace_seconds is not None or judgment_window_seconds is not None:
+        args.append(12 if season_rounds is None else season_rounds)
+    if fallback_grace_seconds is not None or judgment_window_seconds is not None:
+        args.append(900 if fallback_grace_seconds is None else fallback_grace_seconds)
+    if judgment_window_seconds is not None:
+        args.append(judgment_window_seconds)
     return direct_deploy(str(CONTRACT_PATH), *args)
 
 
@@ -107,7 +113,7 @@ def mock_crisis(direct_vm, severity=2):
             {
                 "title": "The Harbor Supply Shock",
                 "description": "A sudden collapse in harbor deliveries has created food shortages, commercial panic, and competing demands for emergency authority.",
-                "resolution_standard": "Plans score well when they credibly restore supplies, protect vulnerable districts, and fit the faction's public resources and doctrine.",
+                "success_criterion": "Each response must name a concrete delivery step that fits the faction's public resources and can restore supplies.",
                 "severity": severity,
             }
         ),
@@ -231,13 +237,41 @@ def test_contract_uses_a_pinned_runner():
     assert "latest" not in first_line
 
 
+def test_constructor_accepts_fallback_actions_and_windows(direct_vm, direct_deploy):
+    factions = [
+        dict(FACTIONS[0], fallback_action="GROW_WEALTH"),
+        dict(FACTIONS[1], fallback_action="BUILD_INFLUENCE"),
+        dict(FACTIONS[2], fallback_action="BUILD_INFLUENCE"),
+    ]
+    contract = deploy_republic(
+        direct_vm,
+        direct_deploy,
+        factions=factions,
+        fallback_grace_seconds=600,
+        judgment_window_seconds=1200,
+    )
+
+    game = contract.get_game()
+    assert game["fallback_grace_seconds"] == 600
+    assert game["judgment_window_seconds"] == 1200
+    assert game["history_rounds"] == 24
+    assert game["vote_rounds"] == 2
+    assert contract.get_faction("MERCHANTS")["fallback_action"] == "GROW_WEALTH"
+
+
+def test_constructor_rejects_invalid_fallback_action(direct_vm, direct_deploy):
+    factions = [dict(FACTIONS[0], fallback_action="UNDERMINE"), *FACTIONS[1:]]
+    with direct_vm.expect_revert("FACTION_FALLBACK_ACTION"):
+        deploy_republic(direct_vm, direct_deploy, factions=factions)
+
+
 def test_initializes_an_ai_controlled_republic(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
     game = contract.get_game()
     factions = json.loads(contract.get_factions_json())
 
-    assert game["contract_version"] == "1.2.0"
-    assert game["policy_version"] == "LOOPHOLE_AUTONOMOUS_REPUBLIC_V6"
+    assert game["contract_version"] == "2.0.0"
+    assert game["policy_version"] == "LOOPHOLE_AUTONOMOUS_REPUBLIC_V7"
     assert game["round_number"] == 1
     assert game["phase"] == "COMMIT"
     assert game["stability"] == 10
