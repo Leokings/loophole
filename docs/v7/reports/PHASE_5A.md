@@ -94,3 +94,20 @@ Validation after round 2:
 - `node --check` passed for the revised scenario and runner scripts.
 
 No StudioNet or Vercel deployment, live demo, proof assembly, push, or Portal submission was run. The owner should return this branch for the requested final review before any live run.
+
+## Fixes (round 3)
+
+The three blockers in `docs/v7/reviews/PHASE_5A_FINAL_CHECK.md` were applied on `v7`, one implementation commit per blocker:
+
+| Review item | Commit | Result |
+| --- | --- | --- |
+| 1. Crisis response scheduling | `07ced82` | Round 5 now sends the Reformer `RESPOND_CRISIS` action whenever the crisis opened in round 4. If no response was recorded, `judgeCrisis` returns without attempting a judge or close. The exported round-5 action list and scenario test cover the active-crisis path; the contract-shape fixture was regenerated. |
+| 2. `INSUFFICIENT` crisis judgments | `7260477` | Crisis validation now requires a non-empty evidence quote only for `MET` and `NOT_MET`. `INSUFFICIENT` is accepted with the contract-required empty quote, and a scenario test exercises that path. |
+| 3. Recovery return-value decoding | `3378bc8` | Recovery records the raw receipt value, records `return_value_decoded`, and only enforces the two replay flags when decoding succeeds. Unchanged republic read-backs plus `caseLaw.get_holding(A.key)` remain the authoritative guard; an undecodable receipt test covers the fallback. |
+
+Final validation after the fixes:
+
+- `python scripts/verify.py --integration` — passed: contract lint/validation/type checks, **98 direct tests**, **2 five-validator GLSim integration tests**, web lint/typecheck/**55 tests across 11 files**/production build, **5 scheduler tests**, and dry-run deployment; final output `Loophole verification passed.`
+- `npm run check` in `web/` — passed: ESLint, TypeScript, **55 tests across 11 files**, and optimized Next.js production build.
+
+No StudioNet or Vercel deployment, live demo, push, or Portal submission was run.

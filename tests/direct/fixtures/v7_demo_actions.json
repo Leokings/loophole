@@ -390,21 +390,21 @@
       },
       {
         "faction": "REFORMERS",
-        "action_type": "BUILD_INFLUENCE",
+        "action_type": "RESPOND_CRISIS",
         "target_faction_id": "",
         "target_law_id": 0,
         "law_title": "",
         "law_text": "",
-        "rationale": "Build influence before filing a court case.",
+        "rationale": "Reopen the two northern grain routes with Reformer escorts and publish a ration ledger each round.",
         "stances": [],
         "calldata": [
           "REFORMERS",
-          "BUILD_INFLUENCE",
+          "RESPOND_CRISIS",
           "",
           0,
           "",
           "",
-          "Build influence before filing a court case.",
+          "Reopen the two northern grain routes with Reformer escorts and publish a ration ledger each round.",
           "[]",
           "shape-test-nonce"
         ]
