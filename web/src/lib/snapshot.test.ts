@@ -10,7 +10,7 @@ describe("bounded public snapshot reads", () => {
       text: `Law ${index + 1}`,
       title: `Rule ${index + 1}`,
     }));
-    const cases = Array.from({ length: 84 }, (_, index) => ({
+    const cases = Array.from({ length: 80 }, (_, index) => ({
       case_id: index + 1,
       status: index < 64 ? "BRIEFING" : "DECIDED",
       law_id: 1,
@@ -59,7 +59,7 @@ describe("bounded public snapshot reads", () => {
       "get_holdings_for_laws",
     ]);
     expect(snapshot.game.law_count).toBe(520);
-    expect(snapshot.cases).toHaveLength(84);
+    expect(snapshot.cases).toHaveLength(80);
     expect(snapshot.suitTargets[0]?.key).toBe("3|UNDERMINE|OFFICEHOLDER");
   });
 });
