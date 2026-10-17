@@ -11,6 +11,7 @@ import {
   waitForFinalizedTransaction,
 } from "@/lib/genlayer";
 import type { CourtCase, RepublicSnapshot } from "@/lib/types";
+import { useRecordedProof } from "@/lib/proof";
 
 function sentenceCase(value: string) {
   return value ? value.toLowerCase().replaceAll("_", " ") : "Awaiting judgment";
@@ -29,9 +30,10 @@ function evidenceAction(item: CourtCase) {
 }
 
 function CaseCard({
-  item, isDemo, isPending, filingTx, onBrief, onKeeper, selectedFactionId, snapshot,
+  item, isDemo, isPending, filingTx, proofLinks, onBrief, onKeeper, selectedFactionId, snapshot,
 }: {
   item: CourtCase; isDemo: boolean; isPending: boolean; filingTx?: string;
+  proofLinks?: { filing_tx?: string; ruling_tx?: string };
   onBrief: (item: CourtCase, brief: string) => void; onKeeper: (item: CourtCase, method: string) => void;
   selectedFactionId: string; snapshot: RepublicSnapshot;
 }) {
@@ -76,6 +78,8 @@ function CaseCard({
     </div> : null}
     <div className="case-links">
       {filingTx ? <a href={transactionExplorerUrl(filingTx)} rel="noreferrer" target="_blank">Filing transaction</a> : null}
+      {proofLinks?.filing_tx ? <a href={transactionExplorerUrl(proofLinks.filing_tx)} rel="noreferrer" target="_blank">Recorded proof: filing</a> : null}
+      {proofLinks?.ruling_tx ? <a href={transactionExplorerUrl(proofLinks.ruling_tx)} rel="noreferrer" target="_blank">Recorded proof: ruling</a> : null}
       {courtLink ? <a href={courtLink} rel="noreferrer" target="_blank">Court contract</a> : null}
       {republicLink ? <a href={republicLink} rel="noreferrer" target="_blank">Republic contract</a> : null}
       {isDemo ? <span>Demonstration record</span> : null}
@@ -90,6 +94,7 @@ export function CourtPanel({
   onToast: (message: string, tone?: "good" | "bad") => void; selectedFactionId: string;
   snapshot: RepublicSnapshot; wallet: string;
 }) {
+  const recordedProof = useRecordedProof();
   const rounds = [...new Set(snapshot.historicalActions.map((action) => action.action_round))].sort((a, b) => b - a);
   const [reference, setReference] = useState("");
   const [defendant, setDefendant] = useState("");
@@ -171,7 +176,7 @@ export function CourtPanel({
 
   function caseList(items: CourtCase[]) {
     return items.length ? items.map((item) => <CaseCard key={item.case_id} item={item} isDemo={isDemo} isPending={isPending}
-      filingTx={filingTransactions[item.case_reference]} onBrief={(record, text) => run(() => addBrief(record, text))}
+      filingTx={filingTransactions[item.case_reference]} proofLinks={recordedProof?.cases?.[String(item.case_id)]} onBrief={(record, text) => run(() => addBrief(record, text))}
       onKeeper={(record, method) => run(() => performKeeperOp(record, method))} selectedFactionId={selectedFactionId} snapshot={snapshot} />)
       : <p className="empty-state">Nothing to show in this group.</p>;
   }

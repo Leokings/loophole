@@ -5,9 +5,12 @@ import Link from "next/link";
 import { BrandMark } from "@/components/brand-mark";
 import { useRepublic } from "@/hooks/use-republic";
 import { highlightQuote } from "@/lib/case-law";
+import { useRecordedProof } from "@/lib/proof";
+import { transactionExplorerUrl } from "@/lib/genlayer";
 
 export default function CaseLawPage() {
   const { error, isDemo, loading, refresh, snapshot } = useRepublic();
+  const proof = useRecordedProof();
   if (!snapshot) return <main className="case-law-shell"><header className="topbar guide-topbar"><Link className="brand" href="/"><span className="brand-seal"><BrandMark /></span><span><b>LOOPHOLE</b><small>Autonomous republic</small></span></Link></header><section className="case-law-empty"><h1>Public case law</h1><p>{error || "Reading the accepted registry…"}</p><button className="secondary-button" onClick={() => void refresh(true)} type="button" disabled={loading}>{loading ? "Reading…" : "Refresh"}</button></section></main>;
 
   const lawsById = new Map(snapshot.lawHistory.map((law) => [law.law_id, law]));
@@ -60,6 +63,10 @@ export default function CaseLawPage() {
                     : <p>{holding.quote ? <mark>{holding.quote}</mark> : "No quote was recorded for this label."}</p>}
                   <div className="holding-meta"><span>Label <b>{holding.label}</b></span><span>Key <code>{holding.key}</code></span><span>Recorded {new Date(holding.recorded_at * 1000).toISOString()}</span>
                     <span>Ruling digest <code>{holding.ruling_digest}</code></span><span>Originating case #{holding.case_id}{origin ? ` · ${origin.case_reference} · ${origin.status}` : " · outside the retained docket window"}</span></div>
+                  {proof?.cases?.[String(holding.case_id)] ? <div className="case-links">
+                    {proof.cases[String(holding.case_id)].filing_tx ? <a href={transactionExplorerUrl(proof.cases[String(holding.case_id)].filing_tx!)} rel="noreferrer" target="_blank">Recorded proof: filing</a> : null}
+                    {proof.cases[String(holding.case_id)].ruling_tx ? <a href={transactionExplorerUrl(proof.cases[String(holding.case_id)].ruling_tx!)} rel="noreferrer" target="_blank">Recorded proof: ruling</a> : null}
+                  </div> : null}
                   {summaryCases.length ? <div className="summary-case-links"><strong>Summary cases citing this holding</strong>{summaryCases.map((item) => <a href={`#holding-case-${holding.case_id}`} key={item.case_id}>Case #{item.case_id} · {item.case_reference}</a>)}</div> : null}
                   <Link href="/" className="secondary-button">Open the docket</Link>
                 </div>
