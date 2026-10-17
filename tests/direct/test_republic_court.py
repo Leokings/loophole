@@ -1,5 +1,6 @@
 import datetime
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from gltest.direct.sdk_loader import setup_sdk_paths
@@ -339,3 +340,53 @@ def test_effects_are_emitted_on_finalized_only(direct_vm, direct_deploy, direct_
     assert len(latest["posts"]) == 2
     assert all(post["on"] == "finalized" for post in latest["posts"])
     assert {post["calldata"]["method"] for post in latest["posts"]} == {"record_holding", "apply_case_outcome"}
+
+
+def test_court_retains_bounded_terminal_cases(direct_vm, direct_deploy, direct_alice, direct_bob):
+    setup_sdk_paths(CONTRACT_PATH, "v0.2.16")
+    from genlayer.py import calldata
+
+    republic, caselaw = _addresses(direct_alice, direct_bob)
+    court = deploy_court(direct_vm, direct_deploy, republic, caselaw)
+    install_republic_hook(direct_vm, direct_alice, direct_bob)
+    republic_hook = direct_vm._gl_call_hook
+
+    def hook(vm, request):
+        if "CallContract" in request and request["CallContract"].get("calldata", {}).get("method") == "get_holding":
+            return bytes([0]) + calldata.encode({})
+        return republic_hook(vm, request)
+
+    direct_vm._gl_call_hook = hook
+    _file(court, direct_vm, direct_alice)
+    template = court.cases[1]
+    court._remove_open_case(1)
+    for case_id in range(1, 66):
+        key = f"law-{case_id}|UNDERMINE|OFFICEHOLDER"
+        case = replace(
+            template,
+            case_id=type(template.case_id)(case_id),
+            case_reference=f"CASE-{case_id:03d}",
+            action_round=type(template.action_round)(case_id + 1),
+            key=key,
+            status="DECIDED",
+            label="COVERED_BREACH",
+        )
+        court.case_count = type(court.case_count)(case_id)
+        court.cases[case_id] = case
+        court.case_by_reference[case.case_reference] = case.case_id
+        claim_key = court._claim_key(case_id + 1, case.defendant_faction_id,
+                                     case.plaintiff_faction_id, int(case.law_id))
+        court.case_by_claim[claim_key] = case.case_id
+        if case_id == 1:
+            court.deciding_case_by_key[key] = case.case_id
+        court._mark_terminal(case)
+
+    assert court.get_storage_stats() == {
+        "case_count": 65, "retained_cases": 64, "open_cases": 0, "stayed_cases": 0,
+    }
+    with direct_vm.expect_revert("CASE_PRUNED"):
+        court.get_case(1)
+    assert court.get_case(2)["case_reference"] == "CASE-002"
+    assert "CASE-001" not in court.case_by_reference
+    assert not any(int(value) == 1 for value in court.case_by_claim.values())
+    assert "law-1|UNDERMINE|OFFICEHOLDER" not in court.deciding_case_by_key

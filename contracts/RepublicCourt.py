@@ -257,13 +257,15 @@ class RepublicCourt(gl.Contract):
     deciding_case_by_key: TreeMap[str, u256]
     season_violations: TreeMap[str, u256]
     open_case_count: u256
+    stayed_case_count: u256
     open_case_head: u256
     open_case_tail: u256
     open_case_previous: TreeMap[u256, u256]
     open_case_next: TreeMap[u256, u256]
     open_case_members: TreeMap[u256, bool]
-    terminal_case_ids: DynArray[u256]
+    terminal_case_ids: TreeMap[u256, u256]
     terminal_head: u256
+    terminal_tail: u256
     terminal_count: u256
 
     def __init__(self, republic_address: Address, caselaw_address: Address, brief_seconds: int, resolution_seconds: int):
@@ -283,9 +285,11 @@ class RepublicCourt(gl.Contract):
         self.resolution_seconds = u256(resolution_seconds)
         self.case_count = u256(0)
         self.open_case_count = u256(0)
+        self.stayed_case_count = u256(0)
         self.open_case_head = u256(0)
         self.open_case_tail = u256(0)
         self.terminal_head = u256(0)
+        self.terminal_tail = u256(0)
         self.terminal_count = u256(0)
 
     def _require_case(self, case_id: int) -> CourtCase:
@@ -362,6 +366,7 @@ class RepublicCourt(gl.Contract):
                 ):
                     case.status = STATUS_STAYED
                     self.cases[case.case_id] = case
+                    self.stayed_case_count += 1
                     return case
         case.status = STATUS_BRIEFING
         case.brief_deadline = u256(_now_epoch() + int(self.brief_seconds))
@@ -428,6 +433,24 @@ class RepublicCourt(gl.Contract):
     def _mark_terminal(self, case: CourtCase) -> CourtCase:
         self._remove_open_case(int(case.case_id))
         self.cases[case.case_id] = case
+        if int(self.terminal_count) >= MAX_RETAINED_TERMINAL_CASES:
+            oldest_id = int(self.terminal_case_ids[self.terminal_head])
+            if oldest_id in self.cases:
+                oldest = self.cases[oldest_id]
+                if oldest.case_reference in self.case_by_reference and int(self.case_by_reference[oldest.case_reference]) == oldest_id:
+                    del self.case_by_reference[oldest.case_reference]
+                claim_key = self._claim_key(int(oldest.action_round), oldest.defendant_faction_id,
+                                            oldest.plaintiff_faction_id, int(oldest.law_id))
+                if claim_key in self.case_by_claim and int(self.case_by_claim[claim_key]) == oldest_id:
+                    del self.case_by_claim[claim_key]
+                if oldest.key in self.deciding_case_by_key and int(self.deciding_case_by_key[oldest.key]) == oldest_id:
+                    del self.deciding_case_by_key[oldest.key]
+                del self.cases[oldest_id]
+            self.terminal_head = u256((int(self.terminal_head) + 1) % MAX_RETAINED_TERMINAL_CASES)
+            self.terminal_count -= 1
+        self.terminal_case_ids[self.terminal_tail] = case.case_id
+        self.terminal_tail = u256((int(self.terminal_tail) + 1) % MAX_RETAINED_TERMINAL_CASES)
+        self.terminal_count += 1
         return case
 
     def _decide_summary(self, case: CourtCase, holding: dict) -> CourtCase:
@@ -438,7 +461,10 @@ class RepublicCourt(gl.Contract):
         case = self._set_disposition(
             case, str(holding["label"]), str(holding["quote"]), int(holding["case_id"]), "SUMMARY", season,
         )
+        was_stayed = case.status == STATUS_STAYED
         case.status = STATUS_SUMMARY
+        if was_stayed:
+            self.stayed_case_count = u256(max(0, int(self.stayed_case_count) - 1))
         case = self._mark_terminal(case)
         self._emit_outcome(case)
         return case
@@ -665,6 +691,7 @@ class RepublicCourt(gl.Contract):
         case.status = STATUS_BRIEFING
         case.brief_deadline = u256(_now_epoch() + int(self.brief_seconds))
         self.deciding_case_by_key[case.key] = case.case_id
+        self.stayed_case_count = u256(max(0, int(self.stayed_case_count) - 1))
         self.cases[case.case_id] = case
         return case.status
 
@@ -739,4 +766,13 @@ class RepublicCourt(gl.Contract):
             "republic_address": self.republic_address, "caselaw_address": self.caselaw_address,
             "brief_seconds": int(self.brief_seconds), "resolution_seconds": int(self.resolution_seconds),
             "case_count": int(self.case_count), "open_case_count": int(self.open_case_count),
+        }
+
+    @gl.public.view
+    def get_storage_stats(self) -> dict:
+        return {
+            "case_count": int(self.case_count),
+            "retained_cases": int(self.terminal_count) + int(self.open_case_count),
+            "open_cases": int(self.open_case_count),
+            "stayed_cases": int(self.stayed_case_count),
         }
