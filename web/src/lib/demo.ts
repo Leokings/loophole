@@ -120,7 +120,7 @@ export const demoSnapshot: RepublicSnapshot = {
   registry: { holding_count: 3, safe_harbor_count: 1, breach_count: 2, compliant_count: 0, court_address: "0x2222222222222222222222222222222222222222", contract_version: "1.0.0", policy_version: "LOOPHOLE_CASE_LAW_V1" },
   keeperStatus: { republic: { now, phase: "COMMIT", ops: [] }, court: { now, ops: [] } },
   storageStats: { republic: {}, court: {} },
-  suitTargets: [{ actionRound: 9, actionType: "GROW_WEALTH", defendantFactionId: "MERCHANTS", lawId: 3, lawTitle: "Universal Conduct Rule", targetClass: "NONE" }],
+  suitTargets: [{ actionRound: 9, actionType: "GROW_WEALTH", defendantFactionId: "MERCHANTS", key: "3|GROW_WEALTH|NONE", lawId: 3, lawTitle: "Universal Conduct Rule", targetClass: "NONE" }],
   historicalActions: [
     { action_round: 8, round_number: 8, action_type: "UNDERMINE", faction_id: "REVOLUTIONARIES", target_faction_id: "MERCHANTS", target_law_id: 0, target_was_officeholder: false, law_title: "", law_text: "", rationale: "Challenge the old rules.", source: "AI_EMPTY_SEAT", stances: "[]", fallback: false, actor: "0x0000000000000000000000000000000000000000" },
   ],

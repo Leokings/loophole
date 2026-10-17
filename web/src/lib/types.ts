@@ -54,7 +54,7 @@ export type KeeperOp = { method: string; args: Array<string | number> };
 export type KeeperStatus = { now: number; phase?: string; ops: KeeperOp[] };
 export type StorageStats = Record<string, number>;
 export type CaseLawRegistry = { holding_count: number; safe_harbor_count: number; breach_count: number; compliant_count: number; court_address: string; contract_version: string; policy_version: string };
-export type SuitTarget = { actionRound: number; actionType: string; defendantFactionId: string; lawId: number; lawTitle: string; targetClass: string };
+export type SuitTarget = { actionRound: number; actionType: string; defendantFactionId: string; key: string; lawId: number; lawTitle: string; targetClass: string };
 export type RepublicSnapshot = {
   cases: CourtCase[]; court: CourtState | null; crisis: Crisis | null; current_actions: RoundAction[]; factions: Faction[];
   game: GameState; laws: Law[]; offices: Office[]; objectives: Objective[]; summary: RoundSummary | null;

@@ -96,6 +96,7 @@ export async function readBoundedRepublicSnapshot(
       actionRound: Number(target.action_round),
       actionType: String(target.action_type),
       defendantFactionId: String(target.defendant_faction_id),
+      key: String(target.key),
       lawId: Number(target.law_id),
       lawTitle: String(target.law_title),
       targetClass: String(target.target_class),

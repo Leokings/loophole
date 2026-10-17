@@ -29,7 +29,8 @@ describe("bounded public snapshot reads", () => {
         objectives: [],
         current_actions: [],
         recent_actions: [],
-        suit_targets: [],
+        suit_targets: [{ action_round: 99, action_type: "UNDERMINE", defendant_faction_id: "A", law_id: 3,
+          key: "3|UNDERMINE|OFFICEHOLDER", law_title: "Office law", target_class: "OFFICEHOLDER" }],
         keeper_status: { now: 0, ops: [] },
         storage_stats: {},
       };
@@ -59,5 +60,6 @@ describe("bounded public snapshot reads", () => {
     ]);
     expect(snapshot.game.law_count).toBe(520);
     expect(snapshot.cases).toHaveLength(84);
+    expect(snapshot.suitTargets[0]?.key).toBe("3|UNDERMINE|OFFICEHOLDER");
   });
 });
