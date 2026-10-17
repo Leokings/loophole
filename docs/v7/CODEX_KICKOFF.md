@@ -85,7 +85,13 @@ Claude signed off on Phase 4. Implement docs/v7/PHASE_4_5_FRONTEND_RELEASE.md §
 ## Phase 5, part 2 (live — only after the owner pushes v7 and says go)
 
 ```
-I pushed v7 and approve the StudioNet release. It is just after 00:00 UTC. Run WP-D2 (probe), WP-D1 (deploy), WP-D3 (live demo), WP-D4 (proof.json + verify:proof) and WP-D5 (budget measurement). Stop immediately on any unexpected judgment and report it. Do not touch Vercel. Write docs/v7/reports/PHASE_5B.md and stop.
+I pushed v7 and approve the StudioNet release. It is just after 00:00 UTC, and GENLAYER_DEPLOYER_PRIVATE_KEY is set in web/.env.local.
+
+1. From web/, run `npm run deploy:studionet` (probe first, then Republic → CaseLaw → Court → links, byte-equal source checks). If the probe or any deploy step fails, stop and report.
+2. Run the live scenario from docs/v7/PHASE_5_DEMO_SCENARIO.md (Revision 2) with `node scripts/run-v7-demo.mjs <deployment-artifact> --confirm-live-studionet` (use the runner's documented arguments). It is resumable: if it stops for a network error, resume it. If it stops on a ScenarioStopError (unexpected label, verdict, sanction, class, influence or error code), do NOT retry or change prompts; record it and stop.
+3. When the scenario completes, run the proof assembler and `npm run verify:proof`.
+4. Record the WP-D5 storage measurements (`get_storage_stats` for all three contracts, plus any "this write costs N" values) and whether both finality messages were delivered per case (`multi_emit_delivered`).
+5. Do not touch Vercel, the keeper, or the Portal. Write docs/v7/reports/PHASE_5B.md with the three gates (technical, distinctiveness, evidence), every tx hash, and anything that only GLSim proved. Then stop.
 ```
 
 ---
