@@ -62,6 +62,28 @@ def test_menu_only_contains_legal_options_and_always_has_safe_actions(direct_vm,
     assert all(item["target_faction_id"] != "MERCHANTS" for item in menu)
 
 
+def test_menu_reserves_suit_slots_when_code_is_full(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    contract.active_law_count = type(contract.active_law_count)(16)
+    snapshot = contract._snapshot()
+    for faction in snapshot:
+        faction["round_number"] = 3
+    law_view = [{
+        "law_id": law_id, "status": "ENACTED", "law_kind": "STATUTE",
+        "veto_deadline_round": 4, "effective_from_round": 5,
+    } for law_id in range(1, 17)]
+    suit_targets = [{
+        "defendant_faction_id": "REFORMERS", "law_id": law_id,
+        "key": f"{law_id}|UNDERMINE|OTHER_FACTION", "holding_label": "",
+    } for law_id in range(1, 17)]
+
+    menu = contract._legal_options("MERCHANTS", snapshot, law_view, {}, True, suit_targets)
+    assert len(menu) == 40
+    assert [item["option_id"] for item in menu[:2]] == ["BUILD_INFLUENCE", "GROW_WEALTH"]
+    assert len([item for item in menu if item["action_type"] == "FILE_SUIT"]) == 8
+    assert all(item["action_type"] == "FILE_SUIT" for item in menu[-8:])
+
+
 def test_garbage_ai_output_falls_back_every_faction_without_failing(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
     direct_vm.mock_llm(

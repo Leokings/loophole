@@ -1510,6 +1510,7 @@ class AutonomousRepublic(gl.Contract):
         faction = by_id[faction_id]
         law_by_id = _laws_by_id(law_view)
         candidates: list[dict] = []
+        suit_candidates: list[dict] = []
 
         def add(action_type: str, option_id: str, target_faction_id: str = "", target_law_id: int = 0,
                 office_id: str = "", needs_law_text: bool = False) -> None:
@@ -1561,9 +1562,14 @@ class AutonomousRepublic(gl.Contract):
             if int(faction["influence"]) >= 1 and int(faction["round_number"]) >= 2:
                 target_id = target["defendant_faction_id"]
                 law_id = int(target["law_id"])
+                candidate_count = len(candidates)
                 add(ACTION_FILE_SUIT, ACTION_FILE_SUIT + ":" + target_id + ":" + str(law_id),
                     target_faction_id=target_id, target_law_id=law_id)
-        return candidates[:MAX_MENU_OPTIONS]
+                if len(candidates) > candidate_count:
+                    suit_candidates.append(candidates.pop())
+        reserved_suit_count = min(len(suit_candidates), MAX_MENU_SUITS)
+        non_suit_limit = MAX_MENU_OPTIONS - reserved_suit_count
+        return candidates[:non_suit_limit] + suit_candidates[:MAX_MENU_SUITS]
 
     def _apply_stances(self, action: RoundAction, current_round: int) -> None:
         try:
