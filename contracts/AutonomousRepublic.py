@@ -2219,24 +2219,25 @@ class AutonomousRepublic(gl.Contract):
             "text": law.text,
             "law_kind": law.law_kind,
         }
+        law_text = str(law.text)
         prompt = _law_certification_prompt(record, [self.faction_ids[index] for index in range(int(self.faction_count))])
 
         def leader_fn():
-            return _canonical_law_certification(_parse_llm_object(prompt), law.text)
+            return _canonical_law_certification(_parse_llm_object(prompt), law_text)
 
         def validator_fn(leader_result) -> bool:
             if not isinstance(leader_result, gl.vm.Return):
                 return False
             try:
-                candidate = _canonical_law_certification(leader_result.calldata, law.text)
-                independent = _canonical_law_certification(_parse_llm_object(prompt), law.text)
+                candidate = _canonical_law_certification(leader_result.calldata, law_text)
+                independent = _canonical_law_certification(_parse_llm_object(prompt), law_text)
             except gl.vm.UserError:
                 return False
             return candidate["label"] == independent["label"]
 
         result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
         try:
-            result = _canonical_law_certification(result, law.text)
+            result = _canonical_law_certification(result, law_text)
         except gl.vm.UserError:
             _llm("LAW_CERTIFICATION_RESULT")
         law.certification = CERT_ADJUDICABLE if result["label"] == "ADJUDICABLE" else CERT_UNADJUDICABLE
