@@ -106,6 +106,14 @@ async function main() {
     if (bytes.includes(13)) throw new Error(`${path} contains CR bytes; normalize line endings before release.`);
     return [name, bytes.toString("utf8")];
   })));
+  const runnerHeaders = Object.values(sources).map((source) => source.split("\n", 1)[0]);
+  if (new Set(runnerHeaders).size !== 1) throw new Error("All four release sources must carry the identical GenLayer dependency header.");
+  const runnerHeader = runnerHeaders[0];
+  let runnerDepends;
+  try { runnerDepends = JSON.parse(runnerHeader.slice(2)).Depends; } catch { runnerDepends = undefined; }
+  if (typeof runnerDepends !== "string" || !runnerDepends.startsWith("py-genlayer:")) {
+    throw new Error("The contract header must declare a pinned py-genlayer dependency.");
+  }
   const factions = JSON.parse(await readFile(resolve(projectRoot, "examples/factions.json"), "utf8"));
   if (!Array.isArray(factions) || factions.length < 3 || factions.length > 8) throw new Error("Faction configuration must contain 3–8 factions.");
   const republicId = String(process.env.LOOPHOLE_REPUBLIC_ID || "FIRST-REPUBLIC");
@@ -161,8 +169,9 @@ async function main() {
     "republic.set_links": { ...state.transactions["republic.set_links"], contract: republic, method: "set_links", args: [court, caseLaw] },
   };
   const record = { version: 1, network: "studionet", chain_id: stage.chainId, commit: commit.trim(), rpc_url: endpoint,
-    contracts: Object.fromEntries(deployed), runner: { probe_address: probeAddress, probe_source_sha256: sha256(deployedProbeSource),
-      probe_deploy_tx: state.transactions["probe.deploy"].tx_hash, probe_write_tx: state.transactions["probe.write"].tx_hash, hash: null },
+    contracts: Object.fromEntries(deployed), runner: { depends: runnerDepends, header_sha256: sha256(runnerHeader),
+      probe_address: probeAddress, probe_source_sha256: sha256(deployedProbeSource),
+      probe_deploy_tx: state.transactions["probe.deploy"].tx_hash, probe_write_tx: state.transactions["probe.write"].tx_hash },
     toolchain: { genlayer_js: "1.1.8", node: process.version }, constructor_args: { republic_id: republicId, faction_ids: factions.map((item) => item.id), ...timing },
     transactions: { ...state.transactions, ...proofTransactions }, generated_at: new Date().toISOString() };
   const outDir = resolve(projectRoot, "deployments"); await mkdir(outDir, { recursive: true });
