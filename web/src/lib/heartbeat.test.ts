@@ -37,15 +37,10 @@ describe("republic heartbeat", () => {
     expect(republicHeartbeat(game, 3 * HOUR + 300 + 601, HOUR).status).toBe("STALLED");
   });
 
-  it("treats a finalized season as due from the objective reveal deadline", () => {
-    // Live V6 state on 2026-10-16: SEASON_FINAL, reveal deadline 07:05:54 UTC, observed 20:21 UTC.
-    const beat = republicHeartbeat(
-      { commit_deadline: 0, objective_reveal_deadline: 1_792_134_354, phase: "SEASON_FINAL", reveal_seconds: 300 },
-      1_792_182_091,
-      HOUR,
-    );
-    expect(beat.status).toBe("STALLED");
-    expect(beat.lastAdvanceAt).toBe(1_792_134_054);
-    expect(beat.overdueSeconds).toBe(47_737);
+  it("waits for the keeper when status lists pending ops outside a due phase", () => {
+    expect(republicHeartbeat({ phase: "COMMIT", opsPending: 2 }, 10_000, HOUR).status)
+      .toBe("WAITING_FOR_KEEPER");
+    expect(republicHeartbeat({ phase: "COMMIT", opsPending: 0 }, 10_000, HOUR).status)
+      .toBe("ON_SCHEDULE");
   });
 });

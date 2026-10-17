@@ -13,6 +13,7 @@ export type HeartbeatGame = {
   commit_seconds?: number;
   objective_reveal_deadline?: number;
   phase?: string;
+  opsPending?: number;
   reveal_deadline?: number;
   reveal_seconds?: number;
 };
@@ -66,10 +67,11 @@ export function republicHeartbeat(game: HeartbeatGame, now: number, slotSeconds:
 
   let dueAt: number | null = null;
   if (phase === "READY_TO_ADVANCE") dueAt = scalar(game.reveal_deadline);
-  if (phase === "READY_TO_FINALIZE_SEASON" || phase === "SEASON_FINAL") dueAt = objectiveDeadline;
+  if (phase === "READY_TO_FINALIZE_SEASON") dueAt = objectiveDeadline;
 
   if (dueAt === null || dueAt <= 0) {
-    return { dueAt: null, expectedByAt: null, lastAdvanceAt, overdueSeconds: 0, phase, slotSeconds, status: "ON_SCHEDULE" };
+    return { dueAt: null, expectedByAt: null, lastAdvanceAt, overdueSeconds: 0, phase, slotSeconds,
+      status: scalar(game.opsPending) > 0 ? "WAITING_FOR_KEEPER" : "ON_SCHEDULE" };
   }
   // Upper bound: the first keeper window that opens at or after the deadline, plus that window.
   let expectedByAt = dueAt + KEEPER_WRITE_WINDOW_SECONDS;

@@ -20,11 +20,8 @@ function adapter(overrides: Partial<KeeperAdapter> = {}): KeeperAdapter {
   return {
     address: "0x3333333333333333333333333333333333333333",
     async readCase() { return { status: "FINAL" }; },
-    async readCourt() { return { open_case_count: 0 }; },
-    async readOpenCaseIds() { return []; },
-    async readRepublic() { return { phase: "COMMIT" }; },
-    async writeCourt() { return HASH; },
-    async writeRepublic() { return HASH; },
+    async readKeeperStatus() { return { ops: [] }; },
+    async writeContract() { return HASH; },
     ...overrides,
   };
 }
@@ -42,6 +39,7 @@ describe("keeper security and scheduling", () => {
     expect(parsed.courtAddresses).toEqual([COURT]);
     expect(parsed.network).toBe("testnetBradbury");
     expect(parsed.rpcUrl).toBe("https://rpc-bradbury.genlayer.com");
+    expect(parsed.maxWritesPerTick).toBe(3);
   });
 
   it("selects StudioNet explicitly and rejects a mismatched RPC", () => {
@@ -69,69 +67,50 @@ describe("keeper security and scheduling", () => {
     expect(studio.republicAddresses).toEqual([CHECKSUMMED_REPUBLIC]);
   });
 
-  it.each([
-    ["READY_TO_ADVANCE", "advance_round"],
-    ["READY_TO_FINALIZE_SEASON", "finalize_season"],
-    ["SEASON_FINAL", "start_next_season"],
-  ])("maps republic phase %s to %s", async (phase, expectedMethod) => {
+  it("executes keeper ops in priority order up to the per-tick cap", async () => {
     const writes: string[] = [];
     const result = await runKeeper({
       adapter: adapter({
-        async readRepublic() { return { phase }; },
-        async writeRepublic(_address, method) { writes.push(method); return HASH; },
+        async readKeeperStatus() { return { ops: ["one", "two", "three", "four"].map((method) => ({ method, args: [] })) }; },
+        async writeContract(_address, method) { writes.push(method); return HASH; },
       }),
-      config: { ...config(), courtAddresses: [] },
+      config: { ...config(), courtAddresses: [], maxWritesPerTick: 3 },
     });
-    expect(writes).toEqual([expectedMethod]);
-    expect(result.submitted).toBe(1);
+    expect(writes).toEqual(["one", "two", "three"]);
+    expect(result.submitted).toBe(3);
   });
 
-  it("advances only court cases whose deadline has passed", async () => {
+  it("stops a contract at the first deferred op", async () => {
     const writes: string[] = [];
     const result = await runKeeper({
       adapter: adapter({
-        async readCourt() { return { open_case_count: 3 }; },
-        async readOpenCaseIds() { return [1, 2, 3]; },
-        async readCase(_address, caseId) {
-          if (caseId === 1) return { status: "BRIEFING", brief_deadline: 90 };
-          if (caseId === 2) return { status: "APPEAL_WINDOW", appeal_deadline: 101 };
-          return { status: "APPEALED", appeal_response_deadline: 80 };
-        },
-        async writeCourt(_address, method) { writes.push(method); return HASH; },
-      }),
-      config: { ...config(), republicAddresses: [] },
-      now: 100,
-    });
-    expect(writes).toEqual(["resolve_case", "resolve_appeal"]);
-    expect(result.submitted).toBe(2);
-  });
-
-  it("keeps an old unresolved case visible after many newer cases are filed", async () => {
-    const reads: number[] = [];
-    const writes: Array<{ caseId: number; method: string }> = [];
-    const result = await runKeeper({
-      adapter: adapter({
-        async readCourt() { return { case_count: 100, open_case_count: 1 }; },
-        async readOpenCaseIds(_address, limit) {
-          expect(limit).toBe(1);
-          return [1];
-        },
-        async readCase(_address, caseId) {
-          reads.push(caseId);
-          return { status: "BRIEFING", brief_deadline: 90 };
-        },
-        async writeCourt(_address, method, args) {
-          writes.push({ caseId: Number(args[0]), method });
+        async readKeeperStatus() { return { ops: ["first", "second", "third"].map((method) => ({ method, args: [] })) }; },
+        async writeContract(_address, method) {
+          writes.push(method);
+          if (method === "second") throw new Error("Contract exceeded the daily snapshot storage budget");
           return HASH;
         },
       }),
-      config: { ...config(), maxContracts: 1, republicAddresses: [] },
-      now: 100,
+      config: { ...config(), courtAddresses: [] },
     });
-
-    expect(reads).toEqual([1]);
-    expect(writes).toEqual([{ caseId: 1, method: "resolve_case" }]);
+    expect(writes).toEqual(["first", "second"]);
+    expect(result.deferred).toBe(1);
     expect(result.submitted).toBe(1);
+  });
+
+  it("reads keeper status once per contract", async () => {
+    const reads: string[] = [];
+    const result = await runKeeper({
+      adapter: adapter({
+        async readKeeperStatus(address) {
+          reads.push(address);
+          return { ops: [{ method: "advance_round", args: [] }] };
+        },
+      }),
+      config: config(),
+    });
+    expect(reads).toEqual([REPUBLIC, COURT]);
+    expect(result.submitted).toBe(2);
   });
 
   it("paces StudioNet republic writes to one keeper window per hour", async () => {
@@ -144,8 +123,8 @@ describe("keeper security and scheduling", () => {
     const reads: number[] = [];
     const writes: string[] = [];
     const keeperAdapter = adapter({
-      async readRepublic() { reads.push(1); return { phase: "READY_TO_ADVANCE" }; },
-      async writeRepublic(_address, method) { writes.push(method); return HASH; },
+      async readKeeperStatus() { reads.push(1); return { ops: [{ method: "advance_round", args: [] }] }; },
+      async writeContract(_address, method) { writes.push(method); return HASH; },
     });
 
     const paced = await runKeeper({ adapter: keeperAdapter, config: studio, now: 7200 + 318 });
@@ -173,8 +152,8 @@ describe("keeper security and scheduling", () => {
   it("defers a StudioNet storage-budget refusal instead of reporting failure", async () => {
     const result = await runKeeper({
       adapter: adapter({
-        async readRepublic() { return { phase: "SEASON_FINAL" }; },
-        async writeRepublic() {
+        async readKeeperStatus() { return { ops: [{ method: "advance_round", args: [] }] }; },
+        async writeContract() {
           throw new Error("GenLayer RPC error (eth_sendRawTransaction): Contract 0x23d1 exceeded the daily snapshot storage budget (1 of 2 bytes used)");
         },
       }),
@@ -189,7 +168,10 @@ describe("keeper security and scheduling", () => {
   it("isolates a failed republic from court maintenance", async () => {
     const result = await runKeeper({
       adapter: adapter({
-        async readRepublic() { throw new Error("rpc unavailable"); },
+        async readKeeperStatus(address) {
+          if (address === REPUBLIC) throw new Error("rpc unavailable");
+          return { ops: [] };
+        },
       }),
       config: config(),
     });
