@@ -1668,6 +1668,10 @@ class AutonomousRepublic(gl.Contract):
                 del self.round_actions[key]
             if key in self.action_commitments:
                 del self.action_commitments[key]
+            if key in self.court_action_ruling_digests:
+                del self.court_action_ruling_digests[key]
+            if key in self.vindicated_actions:
+                del self.vindicated_actions[key]
         if pruned_round in self.round_summaries_json:
             del self.round_summaries_json[pruned_round]
         if pruned_round in self.round_resolved_at:

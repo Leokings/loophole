@@ -798,6 +798,29 @@ def test_no_violation_penalizes_plaintiff_and_vindicates_once(direct_vm, direct_
     assert contract.get_faction("MERCHANTS")["legitimacy"] == 6
 
 
+def test_replayed_outcome_after_retirement_is_rejected(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    _configure_court(contract, direct_vm, direct_alice, direct_bob)
+    _seed_court_action(contract, direct_alice, action_round=3)
+    contract.season_end_round = type(contract.season_end_round)(40)
+    direct_vm.sender = direct_bob
+    contract.apply_case_outcome(1, 3, "MERCHANTS", "TRADITIONALISTS", "NO_VIOLATION", "NONE", "f" * 64)
+    plaintiff_before_replay = contract.get_faction("TRADITIONALISTS")["legitimacy"]
+    assert "3:MERCHANTS" in contract.vindicated_actions
+
+    while int(contract.round_number) <= 28:
+        game = contract.get_game()
+        advance_time_to(direct_vm, game["reveal_deadline"] + game["fallback_grace_seconds"])
+        contract.advance_round_fallback()
+
+    assert contract.get_case_outcome(1) == ""
+    assert "3:MERCHANTS" not in contract.vindicated_actions
+    assert "3:MERCHANTS" not in contract.court_action_ruling_digests
+    assert contract.get_faction("TRADITIONALISTS")["legitimacy"] == plaintiff_before_replay
+    with direct_vm.expect_revert("COURT_ACTION_NOT_FOUND"):
+        contract.apply_case_outcome(1, 3, "MERCHANTS", "TRADITIONALISTS", "NO_VIOLATION", "NONE", "f" * 64)
+
+
 def test_file_suit_menu_excludes_safe_harbor_and_compliant_keys(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
     snapshot = contract._snapshot()
