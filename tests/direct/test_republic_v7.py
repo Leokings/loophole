@@ -199,6 +199,28 @@ def test_repeal_reopens_a_full_code(direct_vm, direct_deploy):
     assert '"reason":"CODE_FULL"' not in contract.get_round_summary(round_number + 2)
 
 
+def test_officeholder_flag_is_recorded_for_any_faction_target(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    for office_id in ("EXECUTIVE", "SPEAKER", "TREASURER"):
+        office = contract.offices[office_id]
+        office.holder_faction_id = "MERCHANTS"
+        contract.offices[office_id] = office
+
+    cases = [
+        action("TEST_UNDERMINE_OFFICEHOLDER", "UNDERMINE", target="MERCHANTS"),
+        action("TEST_UNDERMINE_NON_OFFICEHOLDER", "UNDERMINE", target="REFORMERS"),
+        action("TEST_OTHER_OFFICEHOLDER", "FILE_SUIT", target="MERCHANTS"),
+        action("TEST_NO_TARGET", "BUILD_INFLUENCE"),
+    ]
+    for item in cases:
+        contract._store_action(item, contract.factions["MERCHANTS"].controller, "AI_EMPTY_SEAT")
+
+    assert contract.get_round_action(1, "TEST_UNDERMINE_OFFICEHOLDER")["target_was_officeholder"] is True
+    assert contract.get_round_action(1, "TEST_UNDERMINE_NON_OFFICEHOLDER")["target_was_officeholder"] is False
+    assert contract.get_round_action(1, "TEST_OTHER_OFFICEHOLDER")["target_was_officeholder"] is True
+    assert contract.get_round_action(1, "TEST_NO_TARGET")["target_was_officeholder"] is False
+
+
 def test_later_stance_overwrites_earlier_and_abstain_clears(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
     advance_with_ai(contract, direct_vm, [

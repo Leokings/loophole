@@ -1468,7 +1468,7 @@ class AutonomousRepublic(gl.Contract):
             target_law_id=u256(action["target_law_id"]),
             stances_json=_canonical_json(action.get("stances", [])),
             target_was_officeholder=(
-                action.get("action_type") == ACTION_UNDERMINE
+                action.get("target_faction_id", "") != ""
                 and any(
                     self.offices[office_id].holder_faction_id == action.get("target_faction_id")
                     for office_id in _OFFICE_IDS
