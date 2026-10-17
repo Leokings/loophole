@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 artifacts/
 .live-evidence/
+deploy/demo-state.json
 
 # JavaScript / Next.js
 web/node_modules/
