@@ -743,42 +743,133 @@ def test_native_value_is_rejected(direct_vm, direct_deploy, direct_alice):
         contract.claim_faction("MERCHANTS")
 
 
-def test_only_configured_court_can_apply_a_bounded_idempotent_ruling(
-    direct_vm,
-    direct_deploy,
-    direct_alice,
-    direct_bob,
-):
-    contract = deploy_republic(direct_vm, direct_deploy)
+def _seed_court_action(contract, direct_alice, action_round=3):
     from genlayer.py.types import Address
 
-    court_address = Address(direct_bob)
-    contract.set_court_address(court_address)
-    assert contract.get_game()["court_configured"] is True
+    contract.round_number = action_round
+    contract._store_action(
+        {
+            "faction_id": "MERCHANTS", "action_type": "UNDERMINE", "target_faction_id": "REFORMERS",
+            "target_law_id": 0, "law_title": "", "law_text": "",
+            "rationale": "The faction targeted a rival during the prior political round.", "stances": [],
+        },
+        Address(direct_alice), "HUMAN",
+    )
+    contract.round_number = action_round + 1
 
-    digest = "a" * 64
-    direct_vm.sender = direct_alice
-    with direct_vm.expect_revert("COURT_ONLY"):
-        contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", digest)
 
+def _configure_court(contract, direct_vm, direct_alice, direct_bob):
+    from genlayer.py.types import Address
+
+    contract.set_links(Address(direct_bob), Address(direct_alice))
+    return Address(direct_bob)
+
+
+def test_case_outcome_applies_once_per_action_and_rewards_plaintiff_once(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    assert contract.get_case_outcome(1) == ""
+    _configure_court(contract, direct_vm, direct_alice, direct_bob)
+    _seed_court_action(contract, direct_alice)
     direct_vm.sender = direct_bob
-    contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", digest)
-    contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", digest)
-
-    ruling = json.loads(contract.get_court_ruling(1))
+    digest = "a" * 64
+    contract.apply_case_outcome(1, 3, "MERCHANTS", "TRADITIONALISTS", "VIOLATION", "MAJOR", digest)
+    contract.apply_case_outcome(1, 3, "MERCHANTS", "TRADITIONALISTS", "VIOLATION", "MAJOR", digest)
+    contract.apply_case_outcome(2, 3, "MERCHANTS", "REFORMERS", "VIOLATION", "MAJOR", "b" * 64)
     assert contract.get_faction("MERCHANTS")["legitimacy"] == 2
+    assert contract.get_faction("TRADITIONALISTS")["legitimacy"] == 6
     assert contract.get_game()["stability"] == 8
-    assert contract.get_game()["court_ruling_count"] == 1
-    assert ruling["legitimacy_after"] == 2
-    assert ruling["action_round"] == 3
     assert contract.is_court_action_sanctioned(3, "MERCHANTS") is True
-
+    assert json.loads(contract.get_case_outcome(2))["effects"] == "ACTION_ALREADY_SANCTIONED"
     with direct_vm.expect_revert("COURT_RULING_CONFLICT"):
-        contract.apply_court_ruling(1, 3, "MERCHANTS", "MAJOR", "b" * 64)
+        contract.apply_case_outcome(1, 3, "MERCHANTS", "TRADITIONALISTS", "VIOLATION", "MAJOR", "c" * 64)
 
-    with direct_vm.expect_revert("COURT_ACTION_ALREADY_SANCTIONED"):
-        contract.apply_court_ruling(2, 3, "MERCHANTS", "MAJOR", "b" * 64)
 
+def test_no_violation_penalizes_plaintiff_and_vindicates_once(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    _configure_court(contract, direct_vm, direct_alice, direct_bob)
+    _seed_court_action(contract, direct_alice)
+    direct_vm.sender = direct_bob
+    contract.apply_case_outcome(1, 3, "MERCHANTS", "TRADITIONALISTS", "NO_VIOLATION", "NONE", "d" * 64)
+    contract.apply_case_outcome(2, 3, "MERCHANTS", "REFORMERS", "NO_VIOLATION", "NONE", "e" * 64)
+    assert contract.get_faction("TRADITIONALISTS")["legitimacy"] == 4
+    assert contract.get_faction("REFORMERS")["legitimacy"] == 4
+    assert contract.get_faction("MERCHANTS")["legitimacy"] == 6
+
+
+def test_file_suit_menu_excludes_safe_harbor_and_compliant_keys(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    snapshot = contract._snapshot()
+    for faction in snapshot:
+        faction["round_number"] = 2
+    active_crisis = {}
+    eligible = [{"defendant_faction_id": "REFORMERS", "law_id": 4, "key": "4|UNDERMINE|OTHER_FACTION",
+                 "holding_label": "COVERED_BREACH"}]
+    menu = contract._legal_options("MERCHANTS", snapshot, [], active_crisis, False, eligible)
+    suits = [item for item in menu if item["action_type"] == "FILE_SUIT"]
+    assert [item["option_id"] for item in suits] == ["FILE_SUIT:REFORMERS:4"]
+    assert suits[-1]["needs_law_text"] is False
+
+
+def test_file_suit_costs_influence_and_emits_filing(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    from genlayer.py import calldata
+    from genlayer.py.types import Address
+
+    contract.set_links(Address(direct_bob), Address(direct_alice))
+    posts = []
+
+    def hook(vm, request):
+        if "CallContract" in request:
+            return bytes([0]) + calldata.encode([])
+        if "PostMessage" in request:
+            posts.append(request["PostMessage"])
+            return {"ok": None}
+        return None
+
+    direct_vm._gl_call_hook = hook
+    contract.round_number = 1
+    contract._store_action({
+        "faction_id": "MERCHANTS", "action_type": "UNDERMINE", "target_faction_id": "REFORMERS",
+        "target_law_id": 0, "law_title": "", "law_text": "",
+        "rationale": "Prior round action targeted the officeholder.", "stances": [],
+    }, Address(direct_alice), "HUMAN")
+    contract._store_action({
+        "faction_id": "TRADITIONALISTS", "action_type": "PROPOSE_LAW", "target_faction_id": "",
+        "target_law_id": 0, "law_title": "Office protection", "law_text": "No faction may UNDERMINE a faction that holds public office.",
+        "rationale": "A clear law protecting public officeholders.", "stances": [],
+    }, Address(direct_alice), "HUMAN")
+    contract._create_law(contract.round_actions["1:TRADITIONALISTS"], "STATUTE", 0)
+    law = contract.laws[1]
+    law.status = "ENACTED"
+    law.certification = "ADJUDICABLE"
+    law.effective_from_round = 1
+    contract.laws[1] = law
+    contract.active_law_ids[1] = True
+    contract.round_number = 2
+    before = int(contract.factions["REFORMERS"].influence)
+    for faction_id, kind, target, law_id, rationale in (
+        ("MERCHANTS", "BUILD_INFLUENCE", "", 0, "Build capacity for later political choices."),
+        ("REFORMERS", "FILE_SUIT", "MERCHANTS", 1, "The prior action breached the office rule."),
+        ("TRADITIONALISTS", "BUILD_INFLUENCE", "", 0, "Build capacity for later political choices."),
+    ):
+        contract._store_action({"faction_id": faction_id, "action_type": kind, "target_faction_id": target,
+                                "target_law_id": law_id, "law_title": "", "law_text": "",
+                                "rationale": rationale, "stances": []}, Address(direct_alice), "HUMAN")
+    advance_time_to(direct_vm, contract.get_game()["reveal_deadline"])
+    contract.advance_round()
+    assert int(contract.factions["REFORMERS"].influence) == before - 1
+    assert len(posts) == 1
+    assert posts[0]["on"] == "finalized"
+    assert posts[0]["calldata"]["method"] == "file_case_from_republic"
+    assert posts[0]["calldata"]["args"][0] == "R2-REFORMERS-MERCHANTS-1"
+
+
+def test_holdings_unavailable_fails_closed(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    assert contract._read_holdings() == []
+    assert contract._suit_targets(2, []) == []
 
 def test_world_initializes_offices_season_and_default_objectives(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
