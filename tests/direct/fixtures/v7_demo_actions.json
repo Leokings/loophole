@@ -1,0 +1,823 @@
+{
+  "version": 1,
+  "rounds": {
+    "1": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "PROPOSE_LAW",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "Good Faith Act",
+        "law_text": "Every faction must always act in good faith toward the republic.",
+        "rationale": "Propose a clear good-faith duty for every faction.",
+        "stances": [],
+        "calldata": [
+          "MERCHANTS",
+          "PROPOSE_LAW",
+          "",
+          0,
+          "Good Faith Act",
+          "Every faction must always act in good faith toward the republic.",
+          "Propose a clear good-faith duty for every faction.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "PROPOSE_LAW",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "Officeholder Protection",
+        "law_text": "No faction may UNDERMINE a faction that holds public office.",
+        "rationale": "Protect public officeholders from an undermining action.",
+        "stances": [],
+        "calldata": [
+          "REFORMERS",
+          "PROPOSE_LAW",
+          "",
+          0,
+          "Officeholder Protection",
+          "No faction may UNDERMINE a faction that holds public office.",
+          "Protect public officeholders from an undermining action.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence for the opening legislative round.",
+        "stances": [],
+        "calldata": [
+          "TRADITIONALISTS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence for the opening legislative round.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence for the opening legislative round.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence for the opening legislative round.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ],
+    "2": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while supporting the certified rule.",
+        "stances": [
+          {
+            "law_id": 1,
+            "stance": "SUPPORT"
+          }
+        ],
+        "calldata": [
+          "MERCHANTS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while supporting the certified rule.",
+          "[{\"law_id\":1,\"stance\":\"SUPPORT\"}]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while keeping the vote open.",
+        "stances": [],
+        "calldata": [
+          "REFORMERS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while keeping the vote open.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while supporting the certified rule.",
+        "stances": [
+          {
+            "law_id": 1,
+            "stance": "SUPPORT"
+          }
+        ],
+        "calldata": [
+          "TRADITIONALISTS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while supporting the certified rule.",
+          "[{\"law_id\":1,\"stance\":\"SUPPORT\"}]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while keeping the vote open.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while keeping the vote open.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ],
+    "3": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "RUN_FOR_OFFICE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "EXECUTIVE",
+        "law_text": "",
+        "rationale": "Stand for the Executive office.",
+        "stances": [
+          {
+            "law_id": 1,
+            "stance": "SUPPORT"
+          }
+        ],
+        "calldata": [
+          "MERCHANTS",
+          "RUN_FOR_OFFICE",
+          "",
+          0,
+          "EXECUTIVE",
+          "",
+          "Stand for the Executive office.",
+          "[{\"law_id\":1,\"stance\":\"SUPPORT\"}]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "RUN_FOR_OFFICE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "SPEAKER",
+        "law_text": "",
+        "rationale": "Stand for the Speaker office.",
+        "stances": [],
+        "calldata": [
+          "REFORMERS",
+          "RUN_FOR_OFFICE",
+          "",
+          0,
+          "SPEAKER",
+          "",
+          "Stand for the Speaker office.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "RUN_FOR_OFFICE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "TREASURER",
+        "law_text": "",
+        "rationale": "Stand for the Treasurer office.",
+        "stances": [
+          {
+            "law_id": 1,
+            "stance": "SUPPORT"
+          }
+        ],
+        "calldata": [
+          "TRADITIONALISTS",
+          "RUN_FOR_OFFICE",
+          "",
+          0,
+          "TREASURER",
+          "",
+          "Stand for the Treasurer office.",
+          "[{\"law_id\":1,\"stance\":\"SUPPORT\"}]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while supporting the certified rule.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while supporting the certified rule.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ],
+    "4": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence during the crisis round.",
+        "stances": [],
+        "calldata": [
+          "MERCHANTS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence during the crisis round.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while the crisis is opened at round end.",
+        "stances": [],
+        "calldata": [
+          "REFORMERS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while the crisis is opened at round end.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence during the crisis round.",
+        "stances": [],
+        "calldata": [
+          "TRADITIONALISTS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence during the crisis round.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence during the crisis round.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence during the crisis round.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ],
+    "5": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "UNDERMINE",
+        "target_faction_id": "REVOLUTIONARIES",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Test the protected-office rule against a non-officeholder.",
+        "stances": [],
+        "class_law_id": 1,
+        "calldata": [
+          "MERCHANTS",
+          "UNDERMINE",
+          "REVOLUTIONARIES",
+          0,
+          "",
+          "",
+          "Test the protected-office rule against a non-officeholder.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence before filing a court case.",
+        "stances": [],
+        "calldata": [
+          "REFORMERS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence before filing a court case.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "UNDERMINE",
+        "target_faction_id": "MERCHANTS",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Challenge the sitting Executive and test the officeholder class.",
+        "stances": [],
+        "class_law_id": 1,
+        "calldata": [
+          "TRADITIONALISTS",
+          "UNDERMINE",
+          "MERCHANTS",
+          0,
+          "",
+          "",
+          "Challenge the sitting Executive and test the officeholder class.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "GROW_WEALTH",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Grow wealth while observing the first court precedent.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "GROW_WEALTH",
+          "",
+          0,
+          "",
+          "",
+          "Grow wealth while observing the first court precedent.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ],
+    "6": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "AMEND_LAW",
+        "target_faction_id": "",
+        "target_law_id": 1,
+        "law_title": "Universal Conduct Rule",
+        "law_text": "No faction may UNDERMINE any other faction.",
+        "rationale": "Close the safe harbor with a universal rule.",
+        "stances": [],
+        "calldata": [
+          "MERCHANTS",
+          "AMEND_LAW",
+          "",
+          1,
+          "Universal Conduct Rule",
+          "No faction may UNDERMINE any other faction.",
+          "Close the safe harbor with a universal rule.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence before the amended-law vote.",
+        "stances": [],
+        "calldata": [
+          "REFORMERS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence before the amended-law vote.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "UNDERMINE",
+        "target_faction_id": "REVOLUTIONARIES",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Test the amended rule against a non-officeholder.",
+        "stances": [],
+        "class_law_id": 1,
+        "calldata": [
+          "TRADITIONALISTS",
+          "UNDERMINE",
+          "REVOLUTIONARIES",
+          0,
+          "",
+          "",
+          "Test the amended rule against a non-officeholder.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence before the amended-law vote.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence before the amended-law vote.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ],
+    "7": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "RUN_FOR_OFFICE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "EXECUTIVE",
+        "law_text": "",
+        "rationale": "Stand again for the Executive office.",
+        "stances": [],
+        "calldata": [
+          "MERCHANTS",
+          "RUN_FOR_OFFICE",
+          "",
+          0,
+          "EXECUTIVE",
+          "",
+          "Stand again for the Executive office.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "RUN_FOR_OFFICE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "SPEAKER",
+        "law_text": "",
+        "rationale": "Stand again for the Speaker office.",
+        "stances": [
+          {
+            "law_id": 2,
+            "stance": "SUPPORT"
+          }
+        ],
+        "calldata": [
+          "REFORMERS",
+          "RUN_FOR_OFFICE",
+          "",
+          0,
+          "SPEAKER",
+          "",
+          "Stand again for the Speaker office.",
+          "[{\"law_id\":2,\"stance\":\"SUPPORT\"}]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "RUN_FOR_OFFICE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "TREASURER",
+        "law_text": "",
+        "rationale": "Stand again for the Treasurer office.",
+        "stances": [
+          {
+            "law_id": 2,
+            "stance": "SUPPORT"
+          }
+        ],
+        "calldata": [
+          "TRADITIONALISTS",
+          "RUN_FOR_OFFICE",
+          "",
+          0,
+          "TREASURER",
+          "",
+          "Stand again for the Treasurer office.",
+          "[{\"law_id\":2,\"stance\":\"SUPPORT\"}]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while the amended rule is voted.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while the amended rule is voted.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ],
+    "8": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while the amended rule is voted.",
+        "stances": [],
+        "calldata": [
+          "MERCHANTS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while the amended rule is voted.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while supporting the amended rule.",
+        "stances": [
+          {
+            "law_id": 2,
+            "stance": "SUPPORT"
+          }
+        ],
+        "calldata": [
+          "REFORMERS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while supporting the amended rule.",
+          "[{\"law_id\":2,\"stance\":\"SUPPORT\"}]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while supporting the amended rule.",
+        "stances": [
+          {
+            "law_id": 2,
+            "stance": "SUPPORT"
+          }
+        ],
+        "calldata": [
+          "TRADITIONALISTS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while supporting the amended rule.",
+          "[{\"law_id\":2,\"stance\":\"SUPPORT\"}]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence while the crisis slot is skipped safely.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence while the crisis slot is skipped safely.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ],
+    "9": [
+      {
+        "faction": "MERCHANTS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence before the final cases.",
+        "stances": [],
+        "calldata": [
+          "MERCHANTS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence before the final cases.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REFORMERS",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence before the final cases.",
+        "stances": [],
+        "calldata": [
+          "REFORMERS",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence before the final cases.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "TRADITIONALISTS",
+        "action_type": "UNDERMINE",
+        "target_faction_id": "REVOLUTIONARIES",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Test the amended rule against New Dawn again.",
+        "stances": [],
+        "class_law_id": 2,
+        "calldata": [
+          "TRADITIONALISTS",
+          "UNDERMINE",
+          "REVOLUTIONARIES",
+          0,
+          "",
+          "",
+          "Test the amended rule against New Dawn again.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      },
+      {
+        "faction": "REVOLUTIONARIES",
+        "action_type": "BUILD_INFLUENCE",
+        "target_faction_id": "",
+        "target_law_id": 0,
+        "law_title": "",
+        "law_text": "",
+        "rationale": "Build influence before the final cases.",
+        "stances": [],
+        "calldata": [
+          "REVOLUTIONARIES",
+          "BUILD_INFLUENCE",
+          "",
+          0,
+          "",
+          "",
+          "Build influence before the final cases.",
+          "[]",
+          "shape-test-nonce"
+        ]
+      }
+    ]
+  }
+}

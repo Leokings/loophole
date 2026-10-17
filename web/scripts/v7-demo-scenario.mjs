@@ -472,9 +472,9 @@ async function round2(ctx) {
   const ids = lawIds(ctx);
   await play(ctx, 2, [
     stance("MERCHANTS", ids.rule, commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence while supporting the certified rule.")),
-    stance("REFORMERS", ids.rule, commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while supporting the certified rule.")),
+    commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while keeping the vote open."),
     stance("TRADITIONALISTS", ids.rule, commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence while supporting the certified rule.")),
-    stance("REVOLUTIONARIES", ids.rule, commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while keeping the vote open.")),
+    commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while keeping the vote open."),
   ], {
     stageId: "r2",
     beforeAdvance: async (innerCtx, round) => {
@@ -487,10 +487,10 @@ async function round2(ctx) {
 async function round3(ctx) {
   const ids = lawIds(ctx);
   await play(ctx, 3, [
-    commonAction("MERCHANTS", ACTIONS.RUN, "Stand for the Executive office.", { law_title: "EXECUTIVE" }),
+    stance("MERCHANTS", ids.rule, commonAction("MERCHANTS", ACTIONS.RUN, "Stand for the Executive office.", { law_title: "EXECUTIVE" })),
     commonAction("REFORMERS", ACTIONS.RUN, "Stand for the Speaker office.", { law_title: "SPEAKER" }),
-    commonAction("TRADITIONALISTS", ACTIONS.RUN, "Stand for the Treasurer office.", { law_title: "TREASURER" }),
-    stance("REVOLUTIONARIES", ids.rule, commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while supporting the certified rule.")),
+    stance("TRADITIONALISTS", ids.rule, commonAction("TRADITIONALISTS", ACTIONS.RUN, "Stand for the Treasurer office.", { law_title: "TREASURER" })),
+    commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while supporting the certified rule."),
   ], { stageId: "r3" });
 }
 
@@ -662,7 +662,7 @@ async function round7(ctx) {
 async function round8(ctx) {
   const id = Number(stateFor(ctx).law_ids.v2);
   await play(ctx, 8, [
-    stance("MERCHANTS", id, commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence while supporting the amended rule.")),
+    commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence while the amended rule is voted."),
     stance("REFORMERS", id, commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while supporting the amended rule.")),
     stance("TRADITIONALISTS", id, commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence while supporting the amended rule.")),
     commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while the crisis slot is skipped safely."),
@@ -704,6 +704,72 @@ async function fallbackLast(ctx) {
   stateFor(ctx).fallback_round = { record, summary };
   await save(ctx);
   return record;
+}
+
+/** Export deterministic action payloads for the offline contract-shape test. */
+export function buildExportActionLists() {
+  const rule = 1;
+  const v2 = 2;
+  const rounds = {
+    1: [
+      commonAction("MERCHANTS", ACTIONS.PROPOSE, "Propose a clear good-faith duty for every faction.", { law_title: "Good Faith Act", law_text: "Every faction must always act in good faith toward the republic." }),
+      commonAction("REFORMERS", ACTIONS.PROPOSE, "Protect public officeholders from an undermining action.", { law_title: "Officeholder Protection", law_text: "No faction may UNDERMINE a faction that holds public office." }),
+      commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence for the opening legislative round."),
+      commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence for the opening legislative round."),
+    ],
+    2: [
+      stance("MERCHANTS", rule, commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence while supporting the certified rule.")),
+      commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while keeping the vote open."),
+      stance("TRADITIONALISTS", rule, commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence while supporting the certified rule.")),
+      commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while keeping the vote open."),
+    ],
+    3: [
+      stance("MERCHANTS", rule, commonAction("MERCHANTS", ACTIONS.RUN, "Stand for the Executive office.", { law_title: "EXECUTIVE" })),
+      commonAction("REFORMERS", ACTIONS.RUN, "Stand for the Speaker office.", { law_title: "SPEAKER" }),
+      stance("TRADITIONALISTS", rule, commonAction("TRADITIONALISTS", ACTIONS.RUN, "Stand for the Treasurer office.", { law_title: "TREASURER" })),
+      commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while supporting the certified rule."),
+    ],
+    4: [
+      commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence during the crisis round."),
+      commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while the crisis is opened at round end."),
+      commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence during the crisis round."),
+      commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence during the crisis round."),
+    ],
+    5: [
+      commonAction("MERCHANTS", ACTIONS.UNDERMINE, "Test the protected-office rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", class_law_id: rule }),
+      commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before filing a court case."),
+      commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Challenge the sitting Executive and test the officeholder class.", { target_faction_id: "MERCHANTS", class_law_id: rule }),
+      commonAction("REVOLUTIONARIES", ACTIONS.GROW, "Grow wealth while observing the first court precedent."),
+    ],
+    6: [
+      commonAction("MERCHANTS", ACTIONS.AMEND, "Close the safe harbor with a universal rule.", { target_law_id: rule, law_title: "Universal Conduct Rule", law_text: "No faction may UNDERMINE any other faction." }),
+      commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before the amended-law vote."),
+      commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Test the amended rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", class_law_id: rule }),
+      commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence before the amended-law vote."),
+    ],
+    7: [
+      commonAction("MERCHANTS", ACTIONS.RUN, "Stand again for the Executive office.", { law_title: "EXECUTIVE" }),
+      stance("REFORMERS", v2, commonAction("REFORMERS", ACTIONS.RUN, "Stand again for the Speaker office.", { law_title: "SPEAKER" })),
+      stance("TRADITIONALISTS", v2, commonAction("TRADITIONALISTS", ACTIONS.RUN, "Stand again for the Treasurer office.", { law_title: "TREASURER" })),
+      commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while the amended rule is voted."),
+    ],
+    8: [
+      commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence while the amended rule is voted."),
+      stance("REFORMERS", v2, commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while supporting the amended rule.")),
+      stance("TRADITIONALISTS", v2, commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence while supporting the amended rule.")),
+      commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while the crisis slot is skipped safely."),
+    ],
+    9: [
+      commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence before the final cases."),
+      commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before the final cases."),
+      commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Test the amended rule against New Dawn again.", { target_faction_id: "REVOLUTIONARIES", class_law_id: v2 }),
+      commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence before the final cases."),
+    ],
+  };
+  return Object.fromEntries(Object.entries(rounds).map(([round, actions]) => [round, actions.map((action) => ({
+    ...action,
+    calldata: actionArgs(action, "shape-test-nonce"),
+  }))]));
 }
 
 export const stages = Object.freeze([
@@ -762,4 +828,8 @@ export const scenarioConstants = Object.freeze({
   effectsMaxMs: EFFECTS_MAX_MS,
   effectsRecoveryAfterMs: EFFECTS_RECOVERY_AFTER_MS,
 });
+
+if (process.argv.includes("--export-actions")) {
+  process.stdout.write(`${JSON.stringify({ version: 1, rounds: buildExportActionLists() }, null, 2)}\n`);
+}
 
