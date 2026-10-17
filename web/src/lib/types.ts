@@ -44,7 +44,8 @@ export type CourtCase = {
   claim_text: string; evidence_json: string; evidence_digest: string; target_class: string; key: string;
   plaintiff_brief: string; defense_brief: string; status: string; filed_at: number; brief_deadline: number;
   label: string; quote: string; verdict: string; sanction: string; rule_text: string; holding_case_id: number;
-  ruling_digest: string; decided_at: number; effectsPending?: "holding" | "outcome" | "holding and outcome" | "finality window";
+  ruling_digest: string; decided_at: number; holding_present?: boolean; outcome_present?: boolean;
+  effectsPending?: "holding" | "outcome" | "holding and outcome" | "finality window";
 };
 export type HistoricalAction = RoundAction & { action_round: number };
 export type Objective = { awarded_points: number; commitment: string; committed_by: string; faction_id: string; objective_type: string; revealed: boolean; source: string; target_faction_id: string };

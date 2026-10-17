@@ -266,6 +266,7 @@ def test_worst_case_prompt_fits_without_overflow(direct_vm, direct_deploy, direc
     assert all(len(holding["quote"]) <= 120 for holding in public_state["holdings"])
     summary = contract.get_round_summary(3)
     assert '"prompt_overflow":false' in summary
+    assert len(contract_module._canonical_json(contract.get_public_snapshot())) < 200_000
 
 
 def test_uncertified_law_expires_and_unadjudicable_law_is_terminal(direct_vm, direct_deploy):

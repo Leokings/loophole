@@ -808,6 +808,57 @@ class RepublicCourt(gl.Contract):
         )}
 
     @gl.public.view
+    def get_docket(self, terminal_limit: int) -> dict:
+        """Return all live cases and a bounded tail of retained terminal cases."""
+        maximum_terminal = min(max(0, terminal_limit), 20)
+        cases_by_id: dict[int, dict] = {}
+        for case_id in self.get_open_case_ids(MAX_OPEN_CASE_BATCH):
+            if case_id in self.cases:
+                cases_by_id[case_id] = self._docket_case(self.cases[case_id])
+
+        recent_count = min(int(self.terminal_count), maximum_terminal)
+        first_offset = int(self.terminal_count) - recent_count
+        for offset in range(first_offset, int(self.terminal_count)):
+            slot = (int(self.terminal_head) + offset) % MAX_RETAINED_TERMINAL_CASES
+            case_id = int(self.terminal_case_ids[slot])
+            if case_id in self.cases:
+                cases_by_id[case_id] = self._docket_case(self.cases[case_id])
+
+        return {
+            "cases": [cases_by_id[case_id] for case_id in sorted(cases_by_id, reverse=True)],
+            "court": self.get_court(),
+            "keeper_status": self.get_keeper_status(),
+            "storage_stats": self.get_storage_stats(),
+        }
+
+    def _docket_case(self, case: CourtCase) -> dict:
+        result = self.get_case(int(case.case_id))
+        try:
+            evidence = json.loads(case.evidence_json)
+            law = evidence.get("law", {}) if isinstance(evidence, dict) else {}
+            result["law_title"] = law.get("title", "") if isinstance(law, dict) else ""
+            result["law_text"] = law.get("text", "") if isinstance(law, dict) else ""
+        except (TypeError, ValueError, RecursionError):
+            result["law_title"] = ""
+            result["law_text"] = ""
+
+        holding_present = False
+        outcome_present = False
+        if case.label != LABEL_UNCLEAR and self.caselaw_address:
+            try:
+                holding_present = bool(self._holding_for_key(case.key))
+            except Exception:
+                holding_present = False
+        if case.verdict != VERDICT_AMBIGUOUS and self.republic_address:
+            try:
+                outcome_present = bool(self._republic_view().get_case_outcome(int(case.case_id)))
+            except Exception:
+                outcome_present = False
+        result["holding_present"] = holding_present
+        result["outcome_present"] = outcome_present
+        return result
+
+    @gl.public.view
     def get_open_case_ids(self, limit: int) -> list[int]:
         maximum = min(max(0, limit), MAX_OPEN_CASE_BATCH)
         result: list[int] = []

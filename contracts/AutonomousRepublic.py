@@ -307,6 +307,16 @@ def _canonical_json(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def _public_json_value(value):
+    if isinstance(value, dict):
+        return {str(key): _public_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_public_json_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 def _reject_duplicate_pairs(pairs):
     result = {}
     for key, value in pairs:
@@ -2333,6 +2343,71 @@ class AutonomousRepublic(gl.Contract):
             "election_open": _is_election_round(int(self.round_number)),
             "next_election_round": self._next_election_round(),
         }
+
+    @gl.public.view
+    def get_public_snapshot(self) -> dict:
+        """Return the complete bounded public state needed by the web app."""
+        game = self.get_game()
+        factions = json.loads(self.get_factions_json())
+        offices = json.loads(self.get_offices_json())
+        objectives: list[dict] = []
+        current_actions: list[dict] = []
+        recent_actions: list[dict] = []
+        round_start = max(1, int(self.round_number) - 7)
+        for faction in factions:
+            faction_id = faction["faction_id"]
+            objectives.append(self.get_objective(faction_id))
+            current_key = _action_key(int(self.round_number), faction_id)
+            if current_key in self.round_actions:
+                current_actions.append(self.get_round_action(int(self.round_number), faction_id))
+            for round_number in range(round_start, int(self.round_number) + 1):
+                key = _action_key(round_number, faction_id)
+                if key not in self.round_actions:
+                    continue
+                action = self.get_round_action(round_number, faction_id)
+                action["action_round"] = round_number
+                recent_actions.append(action)
+
+        laws_by_id: dict[int, dict] = {}
+        for law_id in self.active_law_ids:
+            law_id_int = int(law_id)
+            if law_id_int in self.laws:
+                laws_by_id[law_id_int] = self.get_law(law_id_int)
+        first_retained = max(1, int(self.law_count) - HISTORY_ROUNDS * MAX_FACTIONS - MAX_ACTIVE_LAWS - MAX_FACTIONS + 1)
+        resolved_ids: list[int] = []
+        for law_id in range(first_retained, int(self.law_count) + 1):
+            if law_id not in self.laws or law_id in laws_by_id:
+                continue
+            law = self.laws[law_id]
+            if law.status == LAW_PENDING:
+                laws_by_id[law_id] = self.get_law(law_id)
+            elif law.status not in (LAW_ENACTED,):
+                resolved_ids.append(law_id)
+        for law_id in resolved_ids[-16:]:
+            laws_by_id[law_id] = self.get_law(law_id)
+        laws = [laws_by_id[law_id] for law_id in sorted(laws_by_id)]
+
+        crisis = self.get_crisis(int(self.active_crisis_id)) if int(self.active_crisis_id) > 0 else None
+        previous_round = int(self.round_number) - 1
+        last_summary = None
+        if previous_round > 0 and previous_round in self.round_summaries_json:
+            last_summary = json.loads(self.round_summaries_json[previous_round])
+        holdings, holdings_ok = self._read_holdings()
+        suit_targets = self._suit_targets(int(self.round_number), holdings, holdings_ok)
+        return _public_json_value({
+            "game": game,
+            "factions": factions,
+            "offices": offices,
+            "objectives": objectives,
+            "current_actions": current_actions,
+            "last_summary": last_summary,
+            "crisis": crisis,
+            "laws": laws,
+            "recent_actions": recent_actions,
+            "suit_targets": suit_targets,
+            "keeper_status": self.get_keeper_status(),
+            "storage_stats": self.get_storage_stats(),
+        })
 
     @gl.public.view
     def get_keeper_status(self) -> dict:
