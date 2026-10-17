@@ -53,3 +53,23 @@ README, architecture, tutorial, historical-data blog draft, two-minute demo scri
 | Technical readiness | Partial | Required local checks pass; deployment script is prepared but gated; demo plan is outstanding. |
 | Distinctiveness | Drafted | Design comparison and mechanism are documented in `docs/MILESTONE_V7_DESIGN.md`; current review-cohort comparisons remain the owner's pre-submission check. |
 | Evidence readiness | Not ready | No V7 StudioNet deployment, finalized demo transactions, proof manifest, or public V7 Explorer links exist. |
+
+## Fixes
+
+The four Phase 5A review blockers were applied on `v7`, one commit per item:
+
+| Review item | Commit | Result |
+| --- | --- | --- |
+| 1. Code-defined demo scenario | `c1707b1` | Replaced the JSON-only runner path with `web/scripts/v7-demo-scenario.mjs`. The staged story now waits for phases and rounds at the 15-second RPC-safe interval, persists commit nonces before submission, computes and checks target classes and influence, discovers logical case ids, checks labels/verdicts/sanctions, records finality-callback delivery and recovery, stops on unexpected results, and keeps the fallback stage last. The runner still saves every transaction hash before polling and performs a finality sweep before completion. The proof assembler now consumes the scenario state and refuses to assemble a manifest with non-finalized records. |
+| 2. Pinned runner identity | `21dc875` | The release script asserts that the Republic, CaseLaw, Court, and probe sources share one dependency header and records `runner.depends` plus `runner.header_sha256` in the deployment artifact. |
+| 3. Historical blog figures | `8491699` | Corrected the V6 score paragraph to the design's recorded wealth values `0, 0, 134` and lifetime totals `900, 920, 3,170`; the remaining figures were rechecked against design §2. |
+| 4. README accuracy | `a1630da` | Removed Docker/Compose from the local verification prerequisites and clarified that code checks legality while validators audit the bounded AI batch; the crisis node now names the single label-plus-quote criterion. |
+
+The named scenario tests pass: stage order, nonce persistence before commits, stop-on-unexpected case-C label, fallback-last ordering, and both automatic/recovered `multi_emit_delivered` outcomes (**5 passed**). `node --check` passes for the scenario, runner, and proof assembler.
+
+Final verification after the fixes:
+
+- `python scripts/verify.py --integration` — passed: contract lint/validation/type checks, **97 direct tests**, **2 five-validator GLSim integration tests**, web check, scheduler tests and dry run; final output `Loophole verification passed.`
+- `npm run check` in `web/` — passed: lint, TypeScript, **50 tests across 11 files**, and production build.
+
+No StudioNet or Vercel deployment, live demo, proof assembly, push, or Portal submission was run. Phase 5B remains owner-gated and the evidence gate remains not ready until a separately approved live deployment and finalized scenario produce the public proof manifest.
