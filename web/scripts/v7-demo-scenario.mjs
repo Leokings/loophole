@@ -27,6 +27,8 @@ const ACTIONS = Object.freeze({
   RESPOND: "RESPOND_CRISIS",
 });
 
+const ACTIONS_WITH_LAW_TARGET = new Set(["AMEND_LAW", "REPEAL_LAW", "VETO_LAW", "FILE_SUIT"]);
+
 const POLL_PHASE_MS = 15_000;
 const EFFECTS_POLL_MS = 60_000;
 const EFFECTS_MAX_MS = 45 * 60_000;
@@ -183,12 +185,12 @@ async function finalizedStep(ctx, step) {
   return ctx.executeStep(step);
 }
 
-function actionArgs(action, nonce) {
+export function actionArgs(action, nonce) {
   return [
     action.faction,
     action.action_type,
     action.target_faction_id || "",
-    Number(action.target_law_id || 0),
+    ACTIONS_WITH_LAW_TARGET.has(action.action_type) ? Number(action.target_law_id || 0) : 0,
     action.law_title || "",
     action.law_text || "",
     action.rationale,
@@ -266,11 +268,12 @@ export async function assertTargetClass(ctx, action, expected) {
   const target = String(action.target_faction_id || "");
   let offices = parseJson(await read(ctx, "republic", "get_offices_json", [], "A"), "get_offices_json");
   if (!Array.isArray(offices)) offices = Array.isArray(offices?.offices) ? offices.offices : [];
-  const law = action.target_law_id > 0
-    ? parseJson(await read(ctx, "republic", "get_law", [Number(action.target_law_id)], "A"), "get_law")
+  const classLawId = Number(action.class_law_id || 0);
+  const law = classLawId > 0
+    ? parseJson(await read(ctx, "republic", "get_law", [classLawId], "A"), "get_law")
     : null;
   let actual = "OTHER_FACTION";
-  if (Number(action.target_law_id || 0) > 0 && ["AMEND_LAW", "REPEAL_LAW", "VETO_LAW"].includes(action.action_type)) actual = "LAW";
+  if (classLawId > 0 && ["AMEND_LAW", "REPEAL_LAW", "VETO_LAW"].includes(action.action_type)) actual = "LAW";
   else if (!target) actual = "NONE";
   else if (law && target === String(law.sponsor_faction_id)) actual = "LAW_SPONSOR";
   else if (offices.some((office) => String(office.holder_faction_id) === target)) actual = "OFFICEHOLDER";
@@ -489,9 +492,9 @@ async function round4(ctx) {
 async function round5(ctx) {
   const ids = lawIds(ctx);
   await play(ctx, 5, [
-    commonAction("MERCHANTS", ACTIONS.UNDERMINE, "Test the protected-office rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", target_law_id: ids.rule, expected_target_class: "OTHER_FACTION" }),
+    commonAction("MERCHANTS", ACTIONS.UNDERMINE, "Test the protected-office rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", class_law_id: ids.rule, expected_target_class: "OTHER_FACTION" }),
     commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before filing a court case."),
-    commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Challenge the sitting Executive and test the officeholder class.", { target_faction_id: "MERCHANTS", target_law_id: ids.rule, expected_target_class: "OFFICEHOLDER" }),
+    commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Challenge the sitting Executive and test the officeholder class.", { target_faction_id: "MERCHANTS", class_law_id: ids.rule, expected_target_class: "OFFICEHOLDER" }),
     commonAction("REVOLUTIONARIES", ACTIONS.GROW, "Grow wealth while observing the first court precedent."),
   ], { stageId: "r5" });
 }
@@ -551,7 +554,7 @@ async function round6(ctx) {
   await play(ctx, 6, [
     commonAction("MERCHANTS", ACTIONS.AMEND, "Close the safe harbor with a universal rule.", { target_law_id: ids.rule, law_title: "Universal Conduct Rule", law_text: "No faction may UNDERMINE any other faction." }),
     commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before the amended-law vote."),
-    commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Test the amended rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", target_law_id: ids.rule, expected_target_class: "OTHER_FACTION" }),
+    commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Test the amended rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", class_law_id: ids.rule, expected_target_class: "OTHER_FACTION" }),
     commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence before the amended-law vote."),
   ], { stageId: "r6" });
   const snapshot = parseJson(await read(ctx, "republic", "get_public_snapshot", [], "A"), "get_public_snapshot");
@@ -599,7 +602,7 @@ async function round9(ctx) {
   await play(ctx, 9, [
     commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence before the final cases."),
     commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before the final cases."),
-    commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Test the amended rule against New Dawn again.", { target_faction_id: "REVOLUTIONARIES", target_law_id: id, expected_target_class: "OTHER_FACTION" }),
+    commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Test the amended rule against New Dawn again.", { target_faction_id: "REVOLUTIONARIES", class_law_id: id, expected_target_class: "OTHER_FACTION" }),
     commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence before the final cases."),
   ], { stageId: "r9" });
 }

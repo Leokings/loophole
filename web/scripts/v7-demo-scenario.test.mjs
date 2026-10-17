@@ -93,6 +93,12 @@ describe("V7 code-defined live demo scenario", () => {
     ]);
   });
 
+  it("keeps the law used for target classification out of UNDERMINE calldata", async () => {
+    const { actionArgs } = await import("./v7-demo-scenario.mjs");
+    const args = actionArgs({ faction: "MERCHANTS", action_type: "UNDERMINE", target_faction_id: "REVOLUTIONARIES", class_law_id: 2, rationale: "Test a non-officeholder target safely.", stances: [] }, "nonce");
+    expect(args[3]).toBe(0);
+  });
+
   it("stops on the injection case returning an unexpected label", async () => {
     const ctx = {
       state: { ...baseState(), case_ids: { C: 3 }, case_keys: { C: "2|GROW_WEALTH|NONE" } },
