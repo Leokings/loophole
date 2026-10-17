@@ -54,3 +54,18 @@ The app remains in demonstration mode unless contract addresses are configured; 
 - Vite emitted existing `esbuild` deprecation warnings during tests; they did not fail the checks.
 
 No push or deployment was performed.
+
+## Fixes
+
+Phase 4 review findings were addressed on `v7` in separate commits:
+
+| Review item | Commit | Resolution |
+| --- | --- | --- |
+| Must-fix 1: bound snapshot reads | `13e75d3`, `bb187c5` | Added aggregate Republic and Court views and switched the browser to a bounded snapshot helper. The old-world named test simulates 520 laws and 80 cases and enforces at most 8 RPC calls; `/api/health` uses the shared cache. |
+| Must-fix 2: contract-valid demo fixture | `5342745` | Rebuilt demo cases around effective law versions, real target classes, valid holding origins, summary and stay invariants, and the Court's rule-text template. |
+| Must-fix 3: mobile crisis layout | `822b4cd` | Stacked the crisis details at narrow widths, made the top navigation horizontally scrollable, and recaptured the production-built 375 px Chamber screenshot at [phase4-mobile.png](phase4-mobile.png). |
+| Optional: contract-derived suit targets | `dffe793`, `a19d90f` | The Court now reads the contract-calculated suit target class and key; the browser no longer derives them itself. CaseLaw reads are grouped within the bounded 64-law contract limit. |
+
+**Additional tests:** `snapshot reads stay bounded for an old world`; `demo fixture obeys contract invariants`; the direct CaseLaw retained-law limit test; and snapshot/demo Vitest suites passed. After the optional suit-target change, final verification passed: 97 direct tests, 2 five-validator GLSim integration tests, 45 web tests across 10 files with lint/typecheck/production build, and 5 scheduler tests plus dry-run deploy. `Loophole verification passed.` The old-world test models exactly 520 laws and 80 retained cases, and the final 375 px production screenshot was recaptured and visually checked.
+
+**Fixture numbering detail:** the contract allocates a law ID to the vague proposal before its `UNADJUDICABLE` decision. Therefore the safe-harbor rule follows as law #2 in the demo fixture, rather than #1 in the review's suggested story. The cited law IDs, effective rounds, target classes, and holdings now agree with contract behavior.
