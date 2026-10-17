@@ -120,10 +120,12 @@
 - **Schema preflight** for all three contracts against the expected method lists, which are taken from the specs.
 - **Read back each deployed source** and require byte equality with the Git blob. Record `sha256` per contract and the commit SHA.
 - **Deployment record:** `deployments/studionet-<iso>.json` (secret-free) holding addresses, txs, constructor args, runner hash, toolchain versions, source hashes and commit.
-- **Public world constructor args:**
+- **Public world constructor args** (revised by Claude 2026-10-17, see `reviews/PHASE_4_REVIEW.md` item 4):
   - commit 300 s, reveal 300 s, season 12
-  - fallback grace 900 s, judgment window 1800 s
-  - court brief 600 s, resolution 1800 s
+  - **fallback grace 10800 s, judgment window 10800 s**
+  - court brief 600 s, resolution 10800 s
+  - Keeper slot `NEXT_PUBLIC_LOOPHOLE_KEEPER_SLOT_SECONDS=900` unless the WP-D5 measurement forces a larger slot.
+- **Timing guard:** the deploy script must refuse to run unless `fallback_grace_seconds`, `judgment_window_seconds` and court `resolution_seconds` are each **≥ 3 × the configured keeper slot**. Otherwise the paced keeper reaches a ready round only after the grace has passed and settles it by fallback (the AI never plays), and crisis judgments miss their window.
 - Use a **dedicated deployer key** from `web/.env.local`, never the keeper key.
 - Send a browser `User-Agent` on RPC calls if the client allows it; otherwise note it in the report. Poll every 10 s or slower.
 
@@ -153,7 +155,7 @@
    - `record_holding` from an EOA (`COURT_ONLY`)
    - `recover_case_effects` replay: succeeds with both flags false and no state change (assert the read-back)
    - `advance_round_fallback` before the grace period (`FALLBACK_NOT_READY`)
-9. **Fallback round:** let one round sit past the grace period, then call `advance_round_fallback` → sources `AI_FALLBACK` / `HUMAN`.
+9. **Fallback round:** run this step **last**, because the public world's grace is 3 h. Let one round sit past the grace period, then call `advance_round_fallback` → sources `AI_FALLBACK` / `HUMAN`. The stage machine is resumable, so the runner may exit and resume after the wait.
 10. **Release all four seats** to AI.
 
 **Positive-case rule:** after any prompt change made during the demo, rerun steps 2–3 on-chain before continuing.
