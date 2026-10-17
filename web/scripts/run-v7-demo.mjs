@@ -128,6 +128,8 @@ export async function executeStep(step, state, clients, accounts, contracts, opt
     await save(state._state_path, state); // Persist the hash before polling.
   }
 
+  if (options.acceptedOnly && options.deferAcceptance) return record;
+
   let result;
   try {
     result = options.acceptedOnly
@@ -183,6 +185,33 @@ export async function executeStep(step, state, clients, accounts, contracts, opt
   return record;
 }
 
+/** Submit a batch before waiting, then await every acceptance together. */
+export async function executeAcceptedBatch(steps, state, clients, accounts, contracts) {
+  const records = [];
+  for (const step of steps) {
+    records.push(await executeStep(step, state, clients, accounts, contracts, { acceptedOnly: true, deferAcceptance: true }));
+  }
+  await Promise.all(records.map(async (record) => {
+    if (record.status === "FINALIZED_SUCCESS") return record;
+    try {
+      const result = await acceptedResult(clients[record.wallet], record.tx_hash);
+      record.execution_result = result.execution;
+      record.consensus_result = result.consensus;
+      record.votes = result.receipt.consensus_data?.votes ?? result.receipt.consensusData?.votes ?? null;
+      record.error_codes = result.errors;
+      record.status = "ACCEPTED_PENDING_FINALITY";
+      state.steps[record.id] = record;
+      return record;
+    } catch (error) {
+      record.status = "ACCEPTANCE_UNCERTAIN";
+      state.steps[record.id] = record;
+      throw new Error(`Step ${record.id} remains resumable at ${record.tx_hash}; receipt not ready: ${error.message}`);
+    }
+  }));
+  await save(state._state_path, state);
+  return records;
+}
+
 export async function finalitySweep(state, clients) {
   for (const record of Object.values(state.steps || {})) {
     if (record.status !== "ACCEPTED_PENDING_FINALITY") continue;
@@ -213,6 +242,19 @@ function contractRead(clients, contracts, { contract, method, args, wallet }) {
   return clients[wallet].readContract({ address: contracts[contract], args, functionName: method, jsonSafeReturn: true });
 }
 
+export function createReadLimiter({ maxReads = 20, intervalMs = 60_000 } = {}) {
+  const timestamps = [];
+  return async function waitForReadSlot() {
+    while (timestamps.length >= maxReads) {
+      const delay = Math.max(0, timestamps[0] + intervalMs - Date.now());
+      if (delay > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, delay));
+      const cutoff = Date.now() - intervalMs;
+      while (timestamps.length && timestamps[0] <= cutoff) timestamps.shift();
+    }
+    timestamps.push(Date.now());
+  };
+}
+
 async function main() {
   if (process.argv[3] !== "--confirm-live-studionet") {
     throw new Error("This writes live StudioNet state. Re-run with <deployment-artifact.json> --confirm-live-studionet only after owner approval.");
@@ -230,11 +272,13 @@ async function main() {
   const state = await load(statePath, { version: 2, network: "studionet", deployment_artifact: artifactRef, steps: {} });
   state._state_path = statePath;
   if (state.network !== "studionet" || state.deployment_artifact !== artifactRef) throw new Error("Saved demo state belongs to another release.");
+  const waitForReadSlot = createReadLimiter();
   const context = {
     state,
-    read: (request) => contractRead(clients, contracts, request),
+    read: async (request) => { await waitForReadSlot(); return contractRead(clients, contracts, request); },
     executeStep: (step, options) => executeStep(step, state, clients, accounts, contracts, options),
     submitAccepted: (step) => executeStep(step, state, clients, accounts, contracts, { acceptedOnly: true }),
+    submitAcceptedBatch: (steps) => executeAcceptedBatch(steps, state, clients, accounts, contracts),
     saveState: () => save(statePath, state),
     finalitySweep: () => finalitySweep(state, clients),
     now: () => Date.now(),

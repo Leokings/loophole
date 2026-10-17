@@ -1,11 +1,11 @@
 export const DEFAULT_V7_TIMINGS = Object.freeze({
   briefSeconds: 600,
-  commitSeconds: 300,
+  commitSeconds: 600,
   courtResolutionSeconds: 10_800,
   fallbackGraceSeconds: 10_800,
   judgmentWindowSeconds: 10_800,
   keeperSlotSeconds: 900,
-  revealSeconds: 300,
+  revealSeconds: 600,
   seasonRounds: 12,
 });
 

@@ -180,6 +180,11 @@ async function acceptedStep(ctx, step) {
   throw new Error("Scenario context is missing submitAccepted().");
 }
 
+async function acceptedBatch(ctx, steps) {
+  if (typeof ctx.submitAcceptedBatch === "function") return ctx.submitAcceptedBatch(steps);
+  return Promise.all(steps.map((item) => acceptedStep(ctx, item)));
+}
+
 async function finalizedStep(ctx, step) {
   if (typeof ctx.executeStep !== "function") throw new Error("Scenario context is missing executeStep().");
   return ctx.executeStep(step);
@@ -224,6 +229,7 @@ export async function play(ctx, round, actions, options = {}) {
   await waitForPhase(ctx, "COMMIT");
 
   const nonces = {};
+  const previews = [];
   for (const faction of FACTIONS) {
     const action = byFaction.get(faction);
     if (action.action_type === ACTIONS.UNDERMINE && action.expected_target_class) {
@@ -236,23 +242,32 @@ export async function play(ctx, round, actions, options = {}) {
       state.nonces[nonceKey] = nonce;
       await save(ctx);
     }
-    const commitment = await read(ctx, "republic", "preview_action_commitment", actionArgs(action, nonce), factionSeat(faction));
-    await acceptedStep(ctx, step(`${options.stageId || `r${round}`}:commit:${faction}`, `Round ${round}: commit ${faction}`, factionSeat(faction), "republic", "commit_action", [faction, String(commitment)], { round, phase: "COMMIT" }));
+    previews.push({ faction, action, nonce, wallet: factionSeat(faction) });
   }
 
+  const commitments = await Promise.all(previews.map(async ({ faction, action, nonce, wallet }) => ({
+    faction, wallet,
+    commitment: String(await read(ctx, "republic", "preview_action_commitment", actionArgs(action, nonce), wallet)),
+  })));
+  await acceptedBatch(ctx, commitments.map(({ faction, wallet, commitment }) => step(
+    `${options.stageId || `r${round}`}:commit:${faction}`, `Round ${round}: commit ${faction}`, wallet,
+    "republic", "commit_action", [faction, commitment], { round, phase: "COMMIT" },
+  )));
+
   await waitForPhase(ctx, "REVEAL");
-  for (const faction of FACTIONS) {
+  await acceptedBatch(ctx, FACTIONS.map((faction) => {
     const action = byFaction.get(faction);
-    await acceptedStep(ctx, step(`${options.stageId || `r${round}`}:reveal:${faction}`, `Round ${round}: reveal ${faction}`, factionSeat(faction), "republic", "reveal_action", actionArgs(action, nonces[faction]), { round, phase: "REVEAL" }));
-  }
+    return step(`${options.stageId || `r${round}`}:reveal:${faction}`, `Round ${round}: reveal ${faction}`, factionSeat(faction), "republic", "reveal_action", actionArgs(action, nonces[faction]), { round, phase: "REVEAL" });
+  }));
 
   await waitForPhase(ctx, "READY_TO_ADVANCE");
   if (typeof options.beforeAdvance === "function") await options.beforeAdvance(ctx, round);
-  await finalizedStep(ctx, step(`${options.stageId || `r${round}`}:advance`, `Round ${round}: advance`, "A", "republic", "advance_round", [], { round }));
+  await acceptedStep(ctx, step(`${options.stageId || `r${round}`}:advance`, `Round ${round}: advance`, "A", "republic", "advance_round", [], { round }));
   await waitForRound(ctx, Number(round) + 1);
   advanceExpectedInfluence(ctx, actions);
   const after = await currentInfluence(ctx);
   assertInfluence(factionSnapshot(after), state.expected_influence, `round ${round} after settlement`);
+  if (typeof options.afterAdvance === "function") await options.afterAdvance(ctx, round);
   await recordReadbacks(ctx, options.stageId || `r${round}`, round);
   return { round, actions };
 }
@@ -450,7 +465,10 @@ async function round2(ctx) {
     stance("REVOLUTIONARIES", ids.rule, commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while keeping the vote open.")),
   ], {
     stageId: "r2",
-    beforeAdvance: async (innerCtx, round) => finalizedStep(innerCtx, step(`r${round}:fallback-too-early`, "Expected fallback refusal", "A", "republic", "advance_round_fallback", [], { expected_failure: true, expected_error_code: "FALLBACK_NOT_READY" })),
+    beforeAdvance: async (innerCtx, round) => {
+      await certifyInitial(innerCtx);
+      await finalizedStep(innerCtx, step(`r${round}:fallback-too-early`, "Expected fallback refusal", "A", "republic", "advance_round_fallback", [], { expected_failure: true, expected_error_code: "FALLBACK_NOT_READY" }));
+    },
   });
 }
 
@@ -487,7 +505,7 @@ async function round4(ctx) {
     commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence during the crisis round."), response,
     commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence during the crisis round."),
     commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence during the crisis round."),
-  ], { stageId: "r4" });
+  ], { stageId: "r4", beforeAdvance: openCrisis });
 }
 
 async function round5(ctx) {
@@ -557,7 +575,13 @@ async function round6(ctx) {
     commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before the amended-law vote."),
     commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Test the amended rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", class_law_id: ids.rule, expected_target_class: "OTHER_FACTION" }),
     commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence before the amended-law vote."),
-  ], { stageId: "r6" });
+  ], {
+    stageId: "r6",
+    beforeAdvance: async (innerCtx) => {
+      await judgeCrisis(innerCtx);
+      await casesR5(innerCtx);
+    },
+  });
   const snapshot = parseJson(await read(ctx, "republic", "get_public_snapshot", [], "A"), "get_public_snapshot");
   const amended = (snapshot.laws || []).find((law) => law.title === "Universal Conduct Rule");
   if (!amended) throw new Error("Amended law was not visible after round 6.");
@@ -585,7 +609,14 @@ async function round7(ctx) {
     stance("REFORMERS", id, commonAction("REFORMERS", ACTIONS.RUN, "Stand again for the Speaker office.", { law_title: "SPEAKER" })),
     stance("TRADITIONALISTS", id, commonAction("TRADITIONALISTS", ACTIONS.RUN, "Stand again for the Treasurer office.", { law_title: "TREASURER" })),
     commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while the amended rule is voted."),
-  ], { stageId: "r7" });
+  ], {
+    stageId: "r7",
+    beforeAdvance: async (innerCtx) => {
+      await certifyV2(innerCtx);
+      await summaryCase(innerCtx);
+      await guards(innerCtx);
+    },
+  });
 }
 
 async function round8(ctx) {
@@ -595,7 +626,7 @@ async function round8(ctx) {
     stance("REFORMERS", id, commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while supporting the amended rule.")),
     stance("TRADITIONALISTS", id, commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence while supporting the amended rule.")),
     commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence while the crisis slot is skipped safely."),
-  ], { stageId: "r8" });
+  ], { stageId: "r8", afterAdvance: assertCrisisSkipped });
 }
 
 async function round9(ctx) {
@@ -618,6 +649,7 @@ async function casesR9(ctx) {
 
 async function fallbackLast(ctx) {
   await waitForPhase(ctx, "COMMIT");
+  await casesR9(ctx);
   for (const [seat, faction] of Object.entries(SEATS)) {
     await finalizedStep(ctx, step(`r10:release:${faction}`, `Release ${faction}`, seat, "republic", "release_faction", [faction], { round: 10 }));
   }
@@ -628,7 +660,7 @@ async function fallbackLast(ctx) {
   const record = await finalizedStep(ctx, step("r10:fallback", "Advance the final round with fallback", "A", "republic", "advance_round_fallback", [], { round: 10 }));
   const summary = parseJson(await read(ctx, "republic", "get_round_summary", [10], "A"), "get_round_summary");
   const actions = summary?.actions || [];
-  if (actions.length && actions.some((action) => action.source !== "AI_FALLBACK" || action.fallback !== true)) throw new ScenarioStopError("The fallback round contains a non-AI fallback action.");
+  if (actions.length !== FACTIONS.length || actions.some((action) => action.source !== "AI_FALLBACK" || action.fallback !== true)) throw new ScenarioStopError("The fallback round must contain exactly four AI fallback actions.");
   stateFor(ctx).fallback_round = { record, summary };
   await save(ctx);
   return record;
@@ -637,22 +669,29 @@ async function fallbackLast(ctx) {
 export const stages = Object.freeze([
   { id: "claims", title: "Claim four faction seats", run: claimSeats },
   { id: "r1", title: "Play round 1 and discover laws", run: round1 },
-  { id: "certify", title: "Certify both first-round laws", run: certifyInitial },
   { id: "r2", title: "Play round 2 and record early fallback refusal", run: round2 },
   { id: "r3", title: "Run the first election round", run: round3 },
-  { id: "crisis_open", title: "Open the scheduled crisis", run: openCrisis },
   { id: "r4", title: "Play the crisis response round", run: round4 },
   { id: "r5", title: "Create the protected and safe-harbor actions", run: round5 },
-  { id: "crisis_judge", title: "Judge and close the crisis", run: judgeCrisis },
-  { id: "cases_r5", title: "File and resolve the first court cases", run: casesR5 },
   { id: "r6", title: "Amend the safe-harbor law", run: round6 },
-  { id: "certify_v2", title: "Certify the amended law", run: certifyV2 },
-  { id: "summary", title: "Demonstrate a code-only summary", run: summaryCase },
-  { id: "r7", title: "Run the second election round", run: round7 },
+  { id: "r7", title: "Certify, summarize, and run the second election round", run: round7 },
   { id: "r8", title: "Enact the amended law and skip the crisis slot", run: round8 },
   { id: "r9", title: "Create the repeat-offense action", run: round9 },
-  { id: "cases_r9", title: "Resolve the amended-law cases", run: casesR9 },
   { id: "r10_fallback", title: "Release seats and run the final fallback round", run: fallbackLast },
+]);
+
+export const revision2StagePlan = Object.freeze([
+  { id: "claims", readyRound: 0, attached: [] },
+  { id: "r1", readyRound: 1, attached: [] },
+  { id: "r2", readyRound: 2, attached: ["certify", "fallback_too_early"] },
+  { id: "r3", readyRound: 3, attached: [] },
+  { id: "r4", readyRound: 4, attached: ["crisis_open"] },
+  { id: "r5", readyRound: 5, attached: [] },
+  { id: "r6", readyRound: 6, attached: ["crisis_judge", "cases_r5"] },
+  { id: "r7", readyRound: 7, attached: ["certify_v2", "summary", "guards"] },
+  { id: "r8", readyRound: 8, attached: ["crisis_skipped_assertion"] },
+  { id: "r9", readyRound: 9, attached: [] },
+  { id: "r10_fallback", readyRound: 10, attached: ["cases_r9"] },
 ]);
 
 export async function runScenario(ctx, orderedStages = stages) {

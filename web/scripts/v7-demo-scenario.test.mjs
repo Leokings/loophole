@@ -6,6 +6,7 @@ import {
   assertExpectedLabel,
   awaitEffects,
   play,
+  revision2StagePlan,
   scenarioConstants,
   stages,
 } from "./v7-demo-scenario.mjs";
@@ -41,6 +42,10 @@ function roundContext() {
       if (step.method === "reveal_action") reveals += 1;
       if (commits === 4) phase = "REVEAL";
       if (reveals === 4) phase = "READY_TO_ADVANCE";
+      if (step.method === "advance_round") {
+        for (const faction of FACTIONS) influences[faction] = Math.min(20, influences[faction] + 2);
+        round = 2; phase = "COMMIT";
+      }
       return { ...step, tx_hash: `0x${step.id}`, status: "ACCEPTED_PENDING_FINALITY" };
     },
     executeStep: async (step) => {
@@ -60,10 +65,10 @@ function roundContext() {
 describe("V7 code-defined live demo scenario", () => {
   it("exports the authoritative stage order", () => {
     expect(stages.map((stage) => stage.id)).toEqual([
-      "claims", "r1", "certify", "r2", "r3", "crisis_open", "r4", "r5",
-      "crisis_judge", "cases_r5", "r6", "certify_v2", "summary", "r7", "r8",
-      "r9", "cases_r9", "r10_fallback",
+      "claims", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10_fallback",
     ]);
+    expect(revision2StagePlan.map(({ id }) => id)).toEqual(stages.map((stage) => stage.id));
+    expect(revision2StagePlan.find((stage) => stage.id === "r7").attached).toEqual(["certify_v2", "summary", "guards"]);
   });
 
   it("persists every nonce before submitting its commit", async () => {
@@ -73,7 +78,7 @@ describe("V7 code-defined live demo scenario", () => {
     expect(firstCommit).toBeGreaterThan(0);
     const nonceSave = events.slice(0, firstCommit).findLast((event) => event.type === "save");
     expect(nonceSave).toBeTruthy();
-    expect(Object.keys(nonceSave.nonces)).toEqual(["1:MERCHANTS"]);
+    expect(Object.keys(nonceSave.nonces)).toEqual(["1:MERCHANTS", "1:REFORMERS", "1:TRADITIONALISTS", "1:REVOLUTIONARIES"]);
   });
 
   it("serializes stances as the strict contract list shape", async () => {

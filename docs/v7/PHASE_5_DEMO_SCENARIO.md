@@ -1,7 +1,7 @@
 # Phase 5 — live demo scenario (authoritative for WP-D3)
 
 Written by Claude on 2026-10-17. This file replaces the step list in `PHASE_4_5_FRONTEND_RELEASE.md` §B WP-D3 (where they differ, this file wins). It assumes the world deployed by WP-D1 with the reviewed timings:
-- commit 300 s, reveal 300 s, season 12
+- commit 600 s, reveal 600 s, season 12
 - grace, judgment window and court resolution 10,800 s
 - court brief 600 s
 
@@ -60,7 +60,7 @@ The demo depends on phases, deadlines, commit/reveal secrets and live office sta
 | `awaitEffects(caseName)` | After the resolving transaction is **FINALIZED**, polls every 60 s for up to 45 min until `caselaw.get_holding(key)` and `republic.get_case_outcome(id)` are both present. It records `multi_emit_delivered: true` if both appear without help. Otherwise, once 30 min have passed, it calls `recover_case_effects`, records `multi_emit_delivered: false` plus the recovery transaction, and continues. **This measurement is required evidence** (see the Phase 3 review's Phase 5 notes). |
 
 ### Accepted vs finalized
-- Within a round, a step may proceed once its transaction is **ACCEPTED with leader SUCCESS**. Waiting for finality on each commit could exceed the 300 s windows.
+- Within a round, a step may proceed once its transaction is **ACCEPTED with leader SUCCESS**. Waiting for finality on each commit could exceed the 600 s windows.
 - Every recorded transaction must still reach **FINALIZED + SUCCESS** (or the labeled expected failure) **before `assemble-proof` runs**.
 - A background finality sweep updates each record. Any transaction that never finalizes is reported, never dropped.
 
