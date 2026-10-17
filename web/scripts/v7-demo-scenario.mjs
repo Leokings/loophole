@@ -630,19 +630,45 @@ async function republicGuardSnapshot(ctx) {
   };
 }
 
-async function guards(ctx) {
+async function guardHolding(ctx) {
+  const key = stateFor(ctx).case_keys.A;
+  if (!key) return null;
+  return parseJson(await read(ctx, "caseLaw", "get_holding", [key], "A"), "get_holding");
+}
+
+export async function guards(ctx) {
   const ids = lawIds(ctx);
   const before = await republicGuardSnapshot(ctx);
+  const holdingBefore = await guardHolding(ctx);
   await finalizedStep(ctx, step("guard:file-case-from-republic", "Reject an EOA republic filing", "A", "court", "file_case_from_republic", ["V7-GUARD-REPUBLIC", "REFORMERS", "MERCHANTS", 5, ids.rule, "This EOA call must be rejected by the republic-only guard."], { expected_failure: true, expected_error_code: "REPUBLIC_ONLY" }));
   await finalizedStep(ctx, step("guard:record-holding", "Reject an EOA holding record", "A", "caseLaw", "record_holding", ["1|UNDERMINE|OTHER_FACTION", 1, "UNDERMINE", "OTHER_FACTION", "NOT_COVERED", "A valid-looking quoted rule.", 1, "0000000000000000000000000000000000000000000000000000000000000000"], { expected_failure: true, expected_error_code: "COURT_ONLY" }));
   const recovery = await finalizedStep(ctx, step("guard:recover-effects", "Replay delivered case effects", "A", "court", "recover_case_effects", [Number(stateFor(ctx).case_ids.A)], { case_name: "A" }));
-  const effects = parseJson(recovery?.return_value, "recover_case_effects");
-  if (!effects || effects.holding_reemitted !== false || effects.outcome_reemitted !== false) {
+  const rawReturnValue = recovery?.return_value;
+  let effects = null;
+  let returnValueDecoded = false;
+  if (rawReturnValue !== undefined && rawReturnValue !== null) {
+    try {
+      effects = parseJson(rawReturnValue, "recover_case_effects");
+      returnValueDecoded = true;
+    } catch {
+      // Some GenVM versions encode the leader return value. Read-backs below
+      // remain the authoritative replay guard when it cannot be decoded.
+    }
+  }
+  if (returnValueDecoded && (!effects || effects.holding_reemitted !== false || effects.outcome_reemitted !== false)) {
     throw new ScenarioStopError("Case A recovery did not report both effect flags as false.");
   }
   const after = await republicGuardSnapshot(ctx);
-  if (JSON.stringify(before) !== JSON.stringify(after)) throw new ScenarioStopError("Recovering already-delivered case effects changed republic read-backs.");
-  stateFor(ctx).guard_checks = { recovery: effects, unchanged: true };
+  const holdingAfter = await guardHolding(ctx);
+  if (JSON.stringify(before) !== JSON.stringify(after) || JSON.stringify(holdingBefore) !== JSON.stringify(holdingAfter)) {
+    throw new ScenarioStopError("Recovering already-delivered case effects changed republic or holding read-backs.");
+  }
+  stateFor(ctx).guard_checks = {
+    recovery: effects,
+    return_value: rawReturnValue,
+    return_value_decoded: returnValueDecoded,
+    unchanged: true,
+  };
   await save(ctx);
 }
 

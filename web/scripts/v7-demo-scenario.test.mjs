@@ -5,6 +5,7 @@ import {
   ScenarioStopError,
   assertExpectedLabel,
   awaitEffects,
+  guards,
   judgeCrisis,
   play,
   revision2StagePlan,
@@ -152,6 +153,36 @@ describe("V7 code-defined live demo scenario", () => {
     await expect(judgeCrisis(ctx)).resolves.toBeUndefined();
     expect(calls.filter(({ method }) => method === "judge_crisis_response")).toHaveLength(1);
     expect(calls.filter(({ method }) => method === "close_crisis")).toHaveLength(1);
+  });
+
+  it("keeps an unchanged guard run when the recovery return value is undecodable", async () => {
+    const holding = { key: "A-key", label: "NOT_COVERED", quote: "A quoted rule." };
+    const ctx = {
+      state: {
+        ...baseState(),
+        law_ids: { vague: 2, rule: 1 },
+        case_ids: { A: 1 },
+        case_keys: { A: "A-key" },
+      },
+      read: async ({ contract, method }) => {
+        if (contract === "caseLaw" && method === "get_holding") return holding;
+        if (method === "get_game") return { case_outcome_count: 4, active_crisis_id: 0 };
+        if (method === "get_public_snapshot") return { factions: FACTIONS.map((faction) => ({ faction_id: faction, legitimacy: 7 })) };
+        return {};
+      },
+      executeStep: async (step) => ({
+        ...step,
+        status: "FINALIZED_SUCCESS",
+        return_value: step.method === "recover_case_effects" ? "genvm-encoded-return" : null,
+      }),
+      saveState: async () => {},
+    };
+    await expect(guards(ctx)).resolves.toBeUndefined();
+    expect(ctx.state.guard_checks).toMatchObject({
+      return_value: "genvm-encoded-return",
+      return_value_decoded: false,
+      unchanged: true,
+    });
   });
 
   it("stops on the injection case returning an unexpected label", async () => {
