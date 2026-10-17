@@ -72,6 +72,10 @@ def test_garbage_ai_output_falls_back_every_faction_without_failing(direct_vm, d
     assert contract.advance_round() == 1
     for faction_id in ("MERCHANTS", "REFORMERS", "TRADITIONALISTS"):
         assert contract.get_round_action(1, faction_id)["source"] == "AI_FALLBACK"
+    summary = contract.get_round_summary(1)
+    assert '"crisis_status_after":{"crisis_id":0,"status":"NONE"}' in summary
+    assert '"crisis_resolution"' not in summary
+    assert '"opened_crisis"' not in summary
 
 
 def test_fallback_settlement_requires_grace_and_uses_no_llm(direct_vm, direct_deploy):
@@ -101,7 +105,40 @@ def test_prompt_overflow_settles_with_fallbacks(direct_vm, direct_deploy, monkey
     assert all(contract.get_round_action(1, faction)["source"] == "AI_FALLBACK" for faction in (
         "MERCHANTS", "REFORMERS", "TRADITIONALISTS"
     ))
-    assert '"prompt_overflow":true' in contract.get_round_summary(1)
+    summary = contract.get_round_summary(1)
+    assert '"prompt_shortened":true' in summary
+    assert '"prompt_overflow":true' in summary
+
+
+def test_prompt_shortening_is_reported_without_overflow(direct_vm, direct_deploy, monkeypatch):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    long_text = "A faction must publish a delivery schedule before changing its public supply allocation. " * 3
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS", "PROPOSE_LAW", title="Long Observable Rule", law_text=long_text,
+               rationale="Record a public schedule requirement in the pending law."),
+        action("REFORMERS"), action("TRADITIONALISTS"),
+    ])
+    contract_module = next(
+        module for module in sys.modules.values()
+        if getattr(module, "CONTRACT_VERSION", None) == "2.0.0" and hasattr(module, "_ai_action_prompt")
+    )
+    original_prompt = contract_module._ai_action_prompt
+    first_call = True
+
+    def force_shortening(*args, **kwargs):
+        nonlocal first_call
+        prompt = original_prompt(*args, **kwargs)
+        if first_call:
+            first_call = False
+            monkeypatch.setattr(contract_module, "MAX_PROMPT_CHARS", len(prompt) + 100)
+            return prompt + ("x" * 200)
+        return prompt
+
+    monkeypatch.setattr(contract_module, "_ai_action_prompt", force_shortening)
+    advance_with_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
+    summary = contract.get_round_summary(2)
+    assert '"prompt_shortened":true' in summary
+    assert '"prompt_overflow":false' in summary
 
 
 def test_uncertified_law_expires_and_unadjudicable_law_is_terminal(direct_vm, direct_deploy):

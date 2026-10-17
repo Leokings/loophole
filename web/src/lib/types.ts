@@ -114,10 +114,9 @@ export type RoundSummary = {
     target_faction_id: string;
     target_law_id: number;
   }>;
-  crisis_resolution: Record<string, unknown>;
+  crisis_status_after: { crisis_id: number; status: string };
   election_results: Array<Record<string, unknown>>;
   law_resolutions: Array<Record<string, unknown>>;
-  opened_crisis: Record<string, unknown>;
   round_number: number;
 };
 

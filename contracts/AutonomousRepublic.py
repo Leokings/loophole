@@ -1912,7 +1912,11 @@ class AutonomousRepublic(gl.Contract):
             and next_round + CRISIS_DURATION_ROUNDS - 1 <= int(self.season_end_round)
         ):
             self.crisis_open_round = u256(next_round)
-        return {}, skipped
+        crisis_status_after = {"crisis_id": 0, "status": "NONE"}
+        if int(self.active_crisis_id) != 0 and self.active_crisis_id in self.crises:
+            active = self.crises[self.active_crisis_id]
+            crisis_status_after = {"crisis_id": int(active.crisis_id), "status": active.status}
+        return crisis_status_after, skipped
 
     @gl.public.write
     def open_crisis(self) -> int:
@@ -2896,7 +2900,14 @@ class AutonomousRepublic(gl.Contract):
         action["stances"] = stances
         self._store_action(action, gl.message.sender_address, SOURCE_HUMAN)
 
-    def _settle_round(self, now: int, current_round: int, fallback_round: bool, prompt_overflow: bool = False) -> int:
+    def _settle_round(
+        self,
+        now: int,
+        current_round: int,
+        fallback_round: bool,
+        prompt_shortened: bool = False,
+        prompt_overflow: bool = False,
+    ) -> int:
         summary: list[dict] = []
         for index in range(int(self.faction_count)):
             faction_id = self.faction_ids[index]
@@ -2918,8 +2929,7 @@ class AutonomousRepublic(gl.Contract):
 
         law_resolutions = self._resolve_due_laws(current_round)
         election_results = self._resolve_election(current_round)
-        crisis_resolution, crisis_skipped = self._crisis_bookkeeping(now, current_round)
-        opened_crisis: dict = {}
+        crisis_status_after, crisis_skipped = self._crisis_bookkeeping(now, current_round)
         self._prune_round_history(current_round)
         self._process_retirements(current_round)
         self.round_summaries_json[current_round] = _canonical_json({
@@ -2927,10 +2937,10 @@ class AutonomousRepublic(gl.Contract):
             "actions": summary,
             "law_resolutions": law_resolutions,
             "election_results": election_results,
-            "crisis_resolution": crisis_resolution,
-            "opened_crisis": opened_crisis,
+            "crisis_status_after": crisis_status_after,
             "fallback_round": fallback_round,
             "crisis_skipped": crisis_skipped,
+            "prompt_shortened": prompt_shortened,
             "prompt_overflow": prompt_overflow,
             "stability_after": int(self.stability),
             "law_count_after": int(self.law_count),
@@ -2988,7 +2998,7 @@ class AutonomousRepublic(gl.Contract):
             for index in range(int(self.faction_count))
             if _action_key(current_round, self.faction_ids[index]) not in self.round_actions
         ]
-        prompt_overflow = False
+        prompt_shortened = False
         if missing_ids:
             open_law_ids = self._open_law_ids(current_round)
             menus = {
@@ -3003,7 +3013,7 @@ class AutonomousRepublic(gl.Contract):
             prompt = _ai_action_prompt(republic_id, current_round, stability, snapshot, prompt_laws, open_law_ids,
                                        menus, active_crisis, offices, election_open, season_state)
             if len(prompt) > MAX_PROMPT_CHARS:
-                prompt_overflow = True
+                prompt_shortened = True
                 prompt_laws = []
                 for law in law_view:
                     shortened = dict(law)
@@ -3013,7 +3023,7 @@ class AutonomousRepublic(gl.Contract):
                                            menus, active_crisis, offices, election_open, season_state)
             if len(prompt) > MAX_PROMPT_CHARS:
                 self._fill_with_fallbacks(missing_ids)
-                return self._settle_round(now, current_round, True, True)
+                return self._settle_round(now, current_round, True, prompt_shortened, True)
 
             def leader_fn():
                 raw = _parse_llm_object(prompt)
@@ -3049,4 +3059,4 @@ class AutonomousRepublic(gl.Contract):
                 faction = self.factions[entry["faction_id"]]
                 source = SOURCE_AI_FALLBACK if entry["fallback"] else (SOURCE_AI_EMPTY if faction.controller == ZERO_ADDRESS else SOURCE_AI_TIMEOUT)
                 self._store_action(entry, ZERO_ADDRESS, source)
-        return self._settle_round(now, current_round, False, prompt_overflow)
+        return self._settle_round(now, current_round, False, prompt_shortened)

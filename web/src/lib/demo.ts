@@ -224,10 +224,9 @@ export const demoSnapshot: RepublicSnapshot = {
       { action_type: "OPPOSE_LAW", faction_id: "TRADITIONALISTS", law_title: "", rationale: "Emergency finance must remain within chartered public authority.", source: "AI_EMPTY_SEAT", target_faction_id: "", target_law_id: 8 },
       { action_type: "UNDERMINE", faction_id: "REVOLUTIONARIES", law_title: "", rationale: "Expose guild leverage before it becomes permanent emergency policy.", source: "AI_EMPTY_SEAT", target_faction_id: "MERCHANTS", target_law_id: 0 },
     ],
-    crisis_resolution: {},
+    crisis_status_after: { crisis_id: 2, status: "JUDGING" },
     election_results: [],
     law_resolutions: [],
-    opened_crisis: { crisis_id: 2, title: "The Empty Quays" },
     round_number: 5,
   },
 };
