@@ -2,6 +2,7 @@ import {
   ExecutionResult,
   TransactionStatus,
   transactionResultNumberToName,
+  transactionsStatusNumberToName,
 } from "genlayer-js/types";
 
 export type FinalityReceipt = {
@@ -18,6 +19,50 @@ export type FinalityReceipt = {
   statusName?: string;
   txExecutionResultName?: string;
 };
+
+export type TransactionStage = "submitted" | "pending" | "accepted" | "finalized-success" | "finalized-error";
+export type TrackedTransaction = {
+  error?: string;
+  label: string;
+  stage: TransactionStage;
+  transactionHash: string;
+  updatedAt: number;
+};
+
+const TRANSACTION_STORAGE_KEY = "loophole:v7:transactions";
+
+function transactionStorage(): Storage | null {
+  return typeof window === "undefined" ? null : window.localStorage;
+}
+
+export function readTrackedTransactions(): TrackedTransaction[] {
+  try {
+    const raw = transactionStorage()?.getItem(TRANSACTION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) as TrackedTransaction[] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveTrackedTransaction(transaction: TrackedTransaction): void {
+  const storage = transactionStorage();
+  if (!storage) return;
+  const existing = readTrackedTransactions().filter((item) => item.transactionHash !== transaction.transactionHash);
+  storage.setItem(TRANSACTION_STORAGE_KEY, JSON.stringify([transaction, ...existing].slice(0, 30)));
+  window.dispatchEvent(new CustomEvent("loophole:transactions-changed"));
+}
+
+export function transactionStageForStatus(status: string | number | undefined): TransactionStage {
+  const name = typeof status === "number"
+    ? transactionsStatusNumberToName[String(status) as keyof typeof transactionsStatusNumberToName]
+    : status;
+  // FINALIZED still needs its consensus and leader receipt checked before success is shown.
+  if (name === TransactionStatus.FINALIZED) return "pending";
+  if (name === TransactionStatus.ACCEPTED || name === TransactionStatus.APPEAL_COMMITTING
+    || name === TransactionStatus.APPEAL_REVEALING || name === TransactionStatus.READY_TO_FINALIZE) return "accepted";
+  if (name === TransactionStatus.CANCELED) return "finalized-error";
+  return "pending";
+}
 
 export class TransactionFinalityUncertainError extends Error {
   readonly cause: unknown;

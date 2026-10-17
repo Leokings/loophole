@@ -1064,6 +1064,24 @@ summary:focus-visible {
 .summary-case-links strong { color: var(--muted); font-size: 8px; text-transform: uppercase; }
 .summary-case-links a { color: var(--acid); font-size: 9px; }
 .case-law-empty { margin: 10vh auto; max-width: 560px; padding: 24px; position: relative; z-index: 1; }
+.transaction-feed, .proof-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 12px auto; max-width: 1224px; padding: 14px 18px; position: relative; z-index: 1; }
+.transaction-feed-heading, .proof-panel > header { align-items: center; display: flex; justify-content: space-between; }
+.transaction-feed-heading strong, .proof-panel h2 { font-family: var(--font-serif), serif; font-size: 14px; margin: 0; }
+.transaction-feed-heading span, .proof-panel > header > span { color: var(--dim); font-size: 8px; }
+.transaction-feed article, .proof-steps article { align-items: center; border-top: 1px solid var(--line); display: flex; gap: 12px; justify-content: space-between; padding: 9px 0; }
+.transaction-feed article > div, .proof-steps article > div { display: grid; gap: 4px; }
+.transaction-feed article strong, .proof-steps article strong { font-size: 9px; }
+.transaction-feed article span, .proof-steps article span { color: var(--muted); font-size: 8px; }
+.transaction-feed article small, .proof-steps article small { color: var(--amber); font-size: 8px; }
+.transaction-feed a, .proof-panel a { color: var(--acid); font-size: 8px; text-decoration: underline; }
+.proof-panel { background: rgba(13, 27, 25, .68); margin-bottom: 18px; }
+.proof-panel > p { color: var(--muted); font-size: 8px; }
+.proof-panel code { color: var(--acid); overflow-wrap: anywhere; }
+.proof-contracts { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 12px 0; }
+.proof-contracts article { border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 6px; padding: 9px; }
+.proof-contracts strong { font-size: 9px; }
+.proof-contracts code { font-size: 7px; }
+.proof-steps article { align-items: start; }
 
 .law-status,
 .case-status {
@@ -2395,6 +2413,8 @@ button:disabled {
   .case-law-group { padding: 15px; }
   .holding-row > summary { gap: 7px; grid-template-columns: 1fr auto; }
   .holding-row > summary > span:last-child { grid-column: 1 / -1; }
+  .transaction-feed, .proof-panel { margin: 10px 16px; padding: 12px; }
+  .proof-contracts { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

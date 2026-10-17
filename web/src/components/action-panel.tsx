@@ -145,8 +145,10 @@ export function ActionPanel({
   }
 
   async function confirmFinality(hash: string, label: string) {
-    onToast(`${label} submitted · waiting for GenLayer finality`);
-    await waitForFinalizedTransaction(hash);
+    onToast(`${label} submitted · waiting for GenLayer`);
+    await waitForFinalizedTransaction(hash, label, (transaction) => {
+      if (transaction.stage === "accepted") onToast(`${label} accepted · appeal window open`);
+    });
     onToast(`${label} finalized onchain · ${hash.slice(0, 10)}…`);
   }
 

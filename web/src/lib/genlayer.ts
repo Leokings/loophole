@@ -19,7 +19,11 @@ import type {
 import { republicSlotSeconds } from "@/lib/heartbeat";
 import {
   assertFinalizedTransaction,
+  FinalizedTransactionFailure,
+  saveTrackedTransaction,
   TransactionFinalityUncertainError,
+  transactionStageForStatus,
+  type TrackedTransaction,
   type FinalityReceipt,
 } from "@/lib/transaction";
 import {
@@ -234,22 +238,72 @@ export async function runKeeperOp(
     : writeCourt(account, op.method, op.args);
 }
 
-export async function waitForFinalizedTransaction(hash: string): Promise<void> {
-  let receipt: FinalityReceipt;
-  try {
-    receipt = await clientFor().waitForTransactionReceipt({
-      hash: hash as TransactionHash,
-      interval: 5_000,
-      retries: 240,
-      status: TransactionStatus.FINALIZED,
-    }) as unknown as FinalityReceipt;
-  } catch (cause) {
-    throw new TransactionFinalityUncertainError(
-      "Finality polling was interrupted. The transaction may still finalize; its local secret has been preserved.",
-      cause,
-    );
+const activeFinalityPolls = new Map<string, Promise<void>>();
+
+export function waitForFinalizedTransaction(
+  hash: string,
+  label = "Transaction",
+  onStatus?: (transaction: TrackedTransaction) => void,
+): Promise<void> {
+  const active = activeFinalityPolls.get(hash);
+  if (active) return active;
+  const polling = pollUntilFinalized(hash, label, onStatus);
+  activeFinalityPolls.set(hash, polling);
+  void polling.then(() => activeFinalityPolls.delete(hash), () => activeFinalityPolls.delete(hash));
+  return polling;
+}
+
+async function pollUntilFinalized(hash: string, label: string, onStatus?: (transaction: TrackedTransaction) => void) {
+  const transactionHash = hash as TransactionHash;
+  let lastStage: TrackedTransaction["stage"] = "submitted";
+  let transaction: TrackedTransaction = { label, stage: lastStage, transactionHash: hash, updatedAt: Date.now() };
+  saveTrackedTransaction(transaction);
+  onStatus?.(transaction);
+  const client = clientFor();
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    try {
+      const receipt = await client.getTransaction({ hash: transactionHash });
+      const stage = transactionStageForStatus(receipt.statusName ?? receipt.status);
+      if (stage !== lastStage) {
+        lastStage = stage;
+        transaction = { ...transaction, stage, updatedAt: Date.now() };
+        saveTrackedTransaction(transaction);
+        onStatus?.(transaction);
+      }
+      if (receipt.statusName === TransactionStatus.FINALIZED || receipt.status === TransactionStatus.FINALIZED) {
+        try {
+          assertFinalizedTransaction(receipt as unknown as FinalityReceipt);
+          transaction = { ...transaction, stage: "finalized-success", updatedAt: Date.now() };
+          saveTrackedTransaction(transaction);
+          onStatus?.(transaction);
+          return;
+        } catch (cause) {
+          if (cause instanceof TransactionFinalityUncertainError) throw cause;
+          const message = cause instanceof Error ? cause.message : "The finalized transaction failed.";
+          transaction = { ...transaction, error: message, stage: "finalized-error", updatedAt: Date.now() };
+          saveTrackedTransaction(transaction);
+          onStatus?.(transaction);
+          throw cause;
+        }
+      }
+      if (receipt.statusName === TransactionStatus.CANCELED || receipt.status === TransactionStatus.CANCELED) {
+        const message = "GenLayer cancelled this transaction.";
+        transaction = { ...transaction, error: message, stage: "finalized-error", updatedAt: Date.now() };
+        saveTrackedTransaction(transaction);
+        onStatus?.(transaction);
+        throw new Error(message);
+      }
+    } catch (cause) {
+      if (cause instanceof FinalizedTransactionFailure) throw cause;
+      if (cause instanceof Error && cause.message === "GenLayer cancelled this transaction.") throw cause;
+      if (cause instanceof TransactionFinalityUncertainError) throw cause;
+      // Transient RPC errors are retried at the same five-second cadence as status reads.
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 5_000));
   }
-  assertFinalizedTransaction(receipt);
+  throw new TransactionFinalityUncertainError(
+    "Finality is still pending after 20 minutes. This transaction remains saved and will resume checking after a reload.",
+  );
 }
 
 export function transactionExplorerUrl(hash: string): string {
