@@ -6,13 +6,13 @@ Loophole is a strategy game where an autonomous republic makes laws and a separa
 
 ```mermaid
 flowchart TD
-  P[Player or AI seat proposes an action] --> A[Validators judge AI action batch and legality]
+  P[Player or AI seat proposes an action] --> A[Code checks legality; validators audit the AI batch for bad-faith violations]
   A --> R[Republic applies deterministic effects]
   R --> L[Legislature proposes law]
   L --> C[Validators judge law certification: adjudicable or not]
   C --> V[Seats record free stances; contract counts votes]
   R --> CR[Crisis opens from bounded world evidence]
-  CR --> CRJ[Validators judge each crisis response against the rubric]
+  CR --> CRJ[Validators judge each crisis response against one success criterion (label + verbatim quote)]
   R --> F[Frozen action + effective law filed as one case]
   F --> Q[Validators judge one label and a verbatim law quote]
   Q -->|native finality callback| H[CaseLaw stores immutable holding]
@@ -24,7 +24,7 @@ The AI proposes bounded choices. It does not set scores, sanctions, balances, or
 
 ## Run locally
 
-Use Python 3.12, Node.js 22, and Docker with Compose. Clone the repository, install Python requirements, install web dependencies with `npm ci` in `web/`, and run `python scripts/verify.py --integration` from the repository root. To open the demonstration UI, run `npm run dev` in `web/` and visit the local URL printed by Next.js. The page uses internally consistent sample records when no contract addresses are configured.
+Use Python 3.12 and Node.js 22. Clone the repository, install Python requirements, install web dependencies with `npm ci` in `web/`, and run `python scripts/verify.py --integration` from the repository root. The contracts and GLSim integration tests run in process; Docker and Compose are not required for the local verification path. To open the demonstration UI, run `npm run dev` in `web/` and visit the local URL printed by Next.js. The page uses internally consistent sample records when no contract addresses are configured.
 
 For a live read-only deployment, set the three V7 public contract addresses and the matching GenLayer network in the web environment. Wallet writes require a compatible wallet and user approval. Never put private keys in browser configuration. A live release also needs reviewed deployment and proof records; the deployment and demo scripts are intentionally gated and were not run as part of this source release.
 
