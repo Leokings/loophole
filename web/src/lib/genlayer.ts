@@ -33,6 +33,7 @@ const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
 export const republicAddress = process.env.NEXT_PUBLIC_REPUBLIC_ADDRESS ?? "";
 export const courtAddress = process.env.NEXT_PUBLIC_COURT_ADDRESS ?? "";
+export const caseLawAddress = process.env.NEXT_PUBLIC_CASELAW_ADDRESS ?? "";
 const configuredNetworkValue = process.env.NEXT_PUBLIC_GENLAYER_NETWORK || "testnetBradbury";
 if (configuredNetworkValue !== "studionet" && configuredNetworkValue !== "testnetBradbury") {
   throw new Error("NEXT_PUBLIC_GENLAYER_NETWORK must be studionet or testnetBradbury");
@@ -49,6 +50,7 @@ export const keeperSlotSeconds = republicSlotSeconds(
 
 export const hasLiveRepublic = ADDRESS_PATTERN.test(republicAddress);
 export const hasLiveCourt = ADDRESS_PATTERN.test(courtAddress);
+export const hasLiveCaseLaw = ADDRESS_PATTERN.test(caseLawAddress);
 
 type HexAddress = `0x${string}`;
 type ClientConfig = NonNullable<Parameters<typeof createClient>[0]>;
@@ -201,12 +203,43 @@ export async function writeCourt(
   return String(hash);
 }
 
+export async function writeCaseLaw(account: string, functionName: string, args: unknown[] = []): Promise<string> {
+  if (!hasLiveCaseLaw) throw new Error("No live CaseLaw contract is configured.");
+  const client = await writeClientFor(account);
+  const hash = await client.writeContract({
+    address: caseLawAddress as HexAddress,
+    args: args as CalldataEncodable[],
+    functionName,
+    value: 0n,
+  });
+  return String(hash);
+}
+
+export async function runKeeperOp(
+  account: string,
+  op: { args: unknown[]; contract: "republic" | "court"; method: string },
+  snapshot: RepublicSnapshot,
+): Promise<string> {
+  const status = op.contract === "republic" ? snapshot.keeperStatus.republic : snapshot.keeperStatus.court;
+  if (!status?.ops.some((candidate) => candidate.method === op.method
+    && JSON.stringify(candidate.args) === JSON.stringify(op.args))) {
+    throw new Error("That permissionless operation is not currently listed by the contract.");
+  }
+  const allowed = op.contract === "republic"
+    ? new Set(["finalize_season", "close_crisis", "judge_crisis_response", "certify_law", "open_crisis", "advance_round", "advance_round_fallback"])
+    : new Set(["expire_case", "resolve_case", "resolve_stayed_case", "recover_case_effects"]);
+  if (!allowed.has(op.method)) throw new Error("This operation is not available from the public keeper status.");
+  return op.contract === "republic"
+    ? writeRepublic(account, op.method, op.args)
+    : writeCourt(account, op.method, op.args);
+}
+
 export async function waitForFinalizedTransaction(hash: string): Promise<void> {
   let receipt: FinalityReceipt;
   try {
     receipt = await clientFor().waitForTransactionReceipt({
       hash: hash as TransactionHash,
-      interval: 3_000,
+      interval: 5_000,
       retries: 240,
       status: TransactionStatus.FINALIZED,
     }) as unknown as FinalityReceipt;
@@ -239,9 +272,22 @@ export async function previewActionCommitment(draft: ActionDraft, nonce: string)
     draft.law_title,
     draft.law_text,
     draft.rationale,
+    JSON.stringify(draft.stances ?? []),
     nonce,
   ]);
   return String(result);
+}
+
+export async function fileCase(
+  account: string,
+  input: { actionRound: number; claim: string; defendantFactionId: string; lawId: number; plaintiffFactionId: string; reference: string },
+) {
+  return writeCourt(account, "file_case", [input.reference, input.plaintiffFactionId, input.defendantFactionId,
+    input.actionRound, input.lawId, input.claim]);
+}
+
+export async function submitBrief(account: string, caseId: number, factionId: string, brief: string) {
+  return writeCourt(account, "submit_brief", [caseId, factionId, brief]);
 }
 
 export async function previewObjectiveCommitment(
@@ -260,21 +306,27 @@ export async function previewObjectiveCommitment(
 }
 
 async function readCourtCases(state: CourtState): Promise<CourtCase[]> {
-  const first = Math.max(1, state.case_count - 3);
-  const requests: Array<Promise<unknown>> = [];
-  for (let id = state.case_count; id >= first; id -= 1) {
-    requests.push(read(courtAddress, "get_case", [id]));
-  }
-  return serializable<CourtCase[]>(await Promise.all(requests));
+  const openIds = hasLiveCourt ? serializable<number[]>(await read(courtAddress, "get_open_case_ids", [64])) : [];
+  const terminalFirst = Math.max(1, state.case_count - 19);
+  const terminalIds: number[] = [];
+  for (let id = state.case_count; id >= terminalFirst; id -= 1) terminalIds.push(id);
+  const ids = [...new Set([...openIds, ...terminalIds])].sort((a, b) => b - a);
+  const cases = await Promise.all(ids.map(async (id) => {
+    try {
+      return serializable<CourtCase>(await read(courtAddress, "get_case", [id]));
+    } catch {
+      return null;
+    }
+  }));
+  return cases.filter((item): item is CourtCase => item !== null);
 }
 
 export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
   if (!hasLiveRepublic) throw new Error("No live republic contract is configured.");
   const game = serializable<GameState>(await read(republicAddress, "get_game"));
-  const firstLaw = Math.max(1, game.law_count - 3);
   const lawRequests: Array<Promise<unknown>> = [];
-  for (let id = game.law_count; id >= firstLaw; id -= 1) {
-    lawRequests.push(read(republicAddress, "get_law", [id]));
+  for (let id = 1; id <= game.law_count; id += 1) {
+    lawRequests.push(read(republicAddress, "get_law", [id]).catch(() => null));
   }
 
   const factionsPromise = read(republicAddress, "get_factions_json");
@@ -286,14 +338,24 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     ? read(republicAddress, "get_crisis", [game.active_crisis_id])
     : Promise.resolve(null);
   const courtPromise = hasLiveCourt ? read(courtAddress, "get_court") : Promise.resolve(null);
+  const republicKeeperPromise = read(republicAddress, "get_keeper_status").catch(() => ({ now: 0, phase: game.phase, ops: [] }));
+  const republicStatsPromise = read(republicAddress, "get_storage_stats").catch(() => ({}));
+  const courtKeeperPromise = hasLiveCourt ? read(courtAddress, "get_keeper_status").catch(() => ({ now: 0, ops: [] })) : Promise.resolve(null);
+  const courtStatsPromise = hasLiveCourt ? read(courtAddress, "get_storage_stats").catch(() => ({})) : Promise.resolve(null);
+  const registryPromise = hasLiveCaseLaw ? read(caseLawAddress, "get_registry_summary").catch(() => null) : Promise.resolve(null);
 
-  const [factionsRaw, officesRaw, summaryRaw, crisisRaw, courtRaw, lawsRaw] = await Promise.all([
+  const [factionsRaw, officesRaw, summaryRaw, crisisRaw, courtRaw, lawsRaw, republicKeeperRaw, republicStatsRaw, courtKeeperRaw, courtStatsRaw, registryRaw] = await Promise.all([
     factionsPromise,
     officesPromise,
     summaryPromise,
     crisisPromise,
     courtPromise,
     Promise.all(lawRequests),
+    republicKeeperPromise,
+    republicStatsPromise,
+    courtKeeperPromise,
+    courtStatsPromise,
+    registryPromise,
   ]);
 
   const court = courtRaw ? serializable<CourtState>(courtRaw) : null;
@@ -311,8 +373,51 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     ? { ...crisisRecord, responses: parseJson(crisisRecord.responses_json, []) }
     : null;
 
+  const laws = serializable<Array<Law | null>>(lawsRaw).filter((law): law is Law => law !== null
+    && ["ENACTED", "PENDING"].includes(law.status));
+  const holdingsRaw = hasLiveCaseLaw
+    ? await read(caseLawAddress, "get_holdings_for_laws", [JSON.stringify(laws.filter((law) => law.status === "ENACTED").map((law) => law.law_id))]).catch(() => [])
+    : [];
+  const holdings = serializable<RepublicSnapshot["holdings"]>(holdingsRaw);
+  const lawById = new Map(laws.map((law) => [law.law_id, law]));
+  const cases = court ? await readCourtCases(court) : [];
+  const enrichedCases = cases.map((item) => ({ ...item, law_text: lawById.get(item.law_id)?.text ?? "", law_title: lawById.get(item.law_id)?.title ?? "" }));
+  const keeperStatus: RepublicSnapshot["keeperStatus"] = {
+    republic: serializable(republicKeeperRaw),
+    court: courtKeeperRaw ? serializable(courtKeeperRaw) : null,
+  };
+  const storageStats: RepublicSnapshot["storageStats"] = {
+    republic: serializable(republicStatsRaw),
+    court: courtStatsRaw ? serializable(courtStatsRaw) : null,
+  };
+  const suitTargets: RepublicSnapshot["suitTargets"] = [];
+  const held = new Set(holdings.filter((item) => ["NOT_COVERED", "COVERED_COMPLIANT"].includes(item.label)).map((item) => item.key));
+  for (let round = Math.max(1, game.round_number - 8); round < game.round_number && suitTargets.length < 16; round += 1) {
+    const actions = await Promise.all(factions.map((faction) => read(republicAddress, "get_round_action", [round, faction.faction_id])
+      .then((action) => serializable<RoundAction>(action)).catch(() => null)));
+    for (const action of actions) {
+      if (!action) continue;
+      for (const law of laws) {
+        if (law.status !== "ENACTED" || law.certification !== "ADJUDICABLE"
+          || law.effective_from_round > round || (law.effective_until_round > 0 && law.effective_until_round < round)) continue;
+        const targetClass = action.target_law_id > 0 && ["AMEND_LAW", "REPEAL_LAW", "VETO_LAW"].includes(action.action_type)
+          ? "LAW" : action.target_faction_id === "" ? "NONE"
+            : action.target_faction_id === law.sponsor_faction_id ? "LAW_SPONSOR"
+              : action.target_was_officeholder ? "OFFICEHOLDER" : "OTHER_FACTION";
+        const key = `${law.law_id}|${action.action_type}|${targetClass}`;
+        if (held.has(key)) continue;
+        const defendantFactionId = action.target_faction_id || action.faction_id;
+        if (defendantFactionId === action.faction_id) continue;
+        suitTargets.push({ actionRound: round, actionType: action.action_type, defendantFactionId,
+          lawId: law.law_id, lawTitle: law.title, targetClass });
+        if (suitTargets.length >= 16) break;
+      }
+      if (suitTargets.length >= 16) break;
+    }
+  }
+
   return {
-    cases: court ? await readCourtCases(court) : [],
+    cases: enrichedCases,
     court,
     crisis,
     current_actions: (await Promise.all(currentActionRequests)).filter(
@@ -320,7 +425,12 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     ),
     factions,
     game,
-    laws: serializable<Law[]>(lawsRaw),
+    laws,
+    keeperStatus,
+    storageStats,
+    holdings,
+    registry: registryRaw ? serializable(registryRaw) : null,
+    suitTargets,
     offices: parseJson<Office[]>(officesRaw, []),
     objectives: serializable<Objective[]>(await Promise.all(objectiveRequests)),
     summary: summaryRaw ? parseJson<RoundSummary | null>(summaryRaw, null) : null,
