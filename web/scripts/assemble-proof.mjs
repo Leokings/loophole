@@ -13,21 +13,24 @@ const publicPath = resolve(root, "web/public/proof.json");
 async function main() {
   const deployment = JSON.parse(await readFile(deploymentPath, "utf8"));
   const demo = JSON.parse(await readFile(demoPath, "utf8"));
-  const plan = JSON.parse(await readFile(resolve(root, demo.plan_path || "deploy/v7-demo-plan.json"), "utf8"));
   const cases = {};
   const holdings = [];
-  for (const step of plan.steps) {
-    const record = demo.steps?.[step.id];
-    if (!record?.tx_hash) throw new Error(`Demo step ${step.id} has no recorded transaction.`);
-    if (step.case_id && step.case_link_role) {
-      const id = String(step.case_id);
+  const demoSteps = Object.values(demo.steps ?? {});
+  if (!demoSteps.length) throw new Error("Demo state contains no scenario transactions.");
+  for (const record of demoSteps) {
+    if (!record?.tx_hash) throw new Error(`Demo step ${record?.id || "unknown"} has no recorded transaction.`);
+    if (!String(record.status || "").startsWith("FINALIZED_")) throw new Error(`Demo step ${record.id} is not finalized.`);
+    const caseId = record.case_id ?? (record.case_name ? demo.case_ids?.[record.case_name] : undefined);
+    if (caseId !== undefined && record.case_link_role) {
+      const id = String(caseId);
       cases[id] ??= {};
-      if (!["filing_tx", "ruling_tx"].includes(step.case_link_role)) throw new Error(`Unknown case-link role on ${step.id}.`);
-      cases[id][step.case_link_role] = record.tx_hash;
+      const role = record.case_link_role === "filing" || record.case_link_role === "filing_tx"
+        ? "filing_tx" : record.case_link_role === "ruling" || record.case_link_role === "ruling_tx" ? "ruling_tx" : null;
+      if (!role) throw new Error(`Unknown case-link role on ${record.id}.`);
+      cases[id][role] = record.tx_hash;
     }
-    if (step.holding_key) holdings.push({ key: step.holding_key, case_id: Number(step.holding_case_id ?? step.case_id) });
+    if (record.holding_key) holdings.push({ key: record.holding_key, case_id: Number(record.holding_case_id ?? caseId) });
   }
-  const demoSteps = Object.values(demo.steps);
   const proof = {
     version: 1,
     network: deployment.network,
