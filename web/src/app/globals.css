@@ -1050,6 +1050,7 @@ summary:focus-visible {
 .holding-row > summary { align-items: center; cursor: pointer; display: grid; gap: 12px; grid-template-columns: 1fr auto auto; list-style: none; padding: 12px 4px; }
 .holding-row > summary::-webkit-details-marker { display: none; }
 .holding-row > summary > span:last-child { color: var(--dim); font-size: 8px; }
+.holding-row > summary .holding-quote { color: var(--muted); font-size: 8px; grid-column: 1 / -1; line-height: 1.4; }
 .holding-key { display: flex; flex-wrap: wrap; gap: 8px; }
 .holding-key b { color: var(--paper); font-size: 9px; }
 .holding-key i { color: var(--muted); font-size: 8px; font-style: normal; }
@@ -1063,6 +1064,8 @@ summary:focus-visible {
 .summary-case-links { display: grid; gap: 6px; margin: 12px 0; }
 .summary-case-links strong { color: var(--muted); font-size: 8px; text-transform: uppercase; }
 .summary-case-links a { color: var(--acid); font-size: 9px; }
+.guide-inline-note { border-left: 2px solid var(--cyan); color: var(--muted); font-size: 10px; line-height: 1.6; margin: 20px 0 0; padding-left: 12px; }
+.guide-inline-note strong { color: var(--cyan); }
 .case-law-empty { margin: 10vh auto; max-width: 560px; padding: 24px; position: relative; z-index: 1; }
 .transaction-feed, .proof-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 12px auto; max-width: 1224px; padding: 14px 18px; position: relative; z-index: 1; }
 .transaction-feed-heading, .proof-panel > header { align-items: center; display: flex; justify-content: space-between; }

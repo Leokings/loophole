@@ -143,6 +143,14 @@ async function read(address: string, functionName: string, args: unknown[] = [])
   });
 }
 
+async function readBatches<T, R>(items: T[], batchSize: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const result: R[] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    result.push(...await Promise.all(items.slice(index, index + batchSize).map(run)));
+  }
+  return result;
+}
+
 export async function connectWallet(kind: WalletKind): Promise<ConnectedWallet> {
   if (typeof window === "undefined") throw new Error("Wallet connection is only available in the browser.");
 
@@ -369,13 +377,13 @@ async function readCourtCases(state: CourtState): Promise<CourtCase[]> {
   const recentIds: number[] = [];
   for (let id = state.case_count; id >= Math.max(1, state.case_count - 79); id -= 1) recentIds.push(id);
   const ids = [...new Set([...openIds, ...recentIds])].sort((a, b) => b - a);
-  const cases = await Promise.all(ids.map(async (id) => {
+  const cases = await readBatches(ids, 16, async (id) => {
     try {
       return serializable<CourtCase>(await read(courtAddress, "get_case", [id]));
     } catch {
       return null;
     }
-  }));
+  });
   const openSet = new Set(openIds);
   const retained = cases.filter((item): item is CourtCase => item !== null);
   const open = retained.filter((item) => openSet.has(item.case_id));
@@ -387,10 +395,8 @@ async function readCourtCases(state: CourtState): Promise<CourtCase[]> {
 export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
   if (!hasLiveRepublic) throw new Error("No live republic contract is configured.");
   const game = serializable<GameState>(await read(republicAddress, "get_game"));
-  const lawRequests: Array<Promise<unknown>> = [];
-  for (let id = 1; id <= game.law_count; id += 1) {
-    lawRequests.push(read(republicAddress, "get_law", [id]).catch(() => null));
-  }
+  const lawIds = Array.from({ length: game.law_count }, (_, index) => index + 1);
+  const lawRequests = readBatches(lawIds, 16, (id) => read(republicAddress, "get_law", [id]).catch(() => null));
 
   const factionsPromise = read(republicAddress, "get_factions_json");
   const officesPromise = read(republicAddress, "get_offices_json");
@@ -413,7 +419,7 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     summaryPromise,
     crisisPromise,
     courtPromise,
-    Promise.all(lawRequests),
+    lawRequests,
     republicKeeperPromise,
     republicStatsPromise,
     courtKeeperPromise,
@@ -453,8 +459,9 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
   const lawHistory = serializable<Array<Law | null>>(lawsRaw).filter((law): law is Law => law !== null);
   const laws = lawHistory.filter((law) => ["ENACTED", "PENDING"].includes(law.status));
   const holdingLawIds = lawHistory.map((law) => law.law_id);
-  const holdings = hasLiveCaseLaw ? (await Promise.all(Array.from({ length: Math.ceil(holdingLawIds.length / 16) }, (_, index) =>
-    read(caseLawAddress, "get_holdings_for_laws", [JSON.stringify(holdingLawIds.slice(index * 16, index * 16 + 16))]).catch(() => []))))
+  const holdingIdBatches = Array.from({ length: Math.ceil(holdingLawIds.length / 16) }, (_, index) => holdingLawIds.slice(index * 16, index * 16 + 16));
+  const holdings = hasLiveCaseLaw ? (await readBatches(holdingIdBatches, 4, (ids) =>
+    read(caseLawAddress, "get_holdings_for_laws", [JSON.stringify(ids)]).catch(() => [])))
     .flatMap((result) => serializable<RepublicSnapshot["holdings"]>(result)) : [];
   const lawById = new Map(lawHistory.map((law) => [law.law_id, law]));
   const cases = court ? await readCourtCases(court) : [];
@@ -475,7 +482,11 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
       && !caseEffects?.outcome;
     const effectsPending: CourtCase["effectsPending"] = holdingMissing && outcomeMissing ? "holding and outcome"
       : holdingMissing ? "holding" : outcomeMissing ? "outcome" : undefined;
-    return { ...item, law_text: lawById.get(item.law_id)?.text ?? "", law_title: lawById.get(item.law_id)?.title ?? "", effectsPending };
+    const evidence = parseJson<{ law?: { title?: string; text?: string } }>(item.evidence_json, {});
+    const frozenLaw = evidence.law ?? {};
+    const lawText = frozenLaw.text ?? "";
+    const lawTitle = frozenLaw.title ?? "";
+    return { ...item, law_text: lawText || lawById.get(item.law_id)?.text || "", law_title: lawTitle || lawById.get(item.law_id)?.title || "", effectsPending };
   });
   const keeperStatus: RepublicSnapshot["keeperStatus"] = {
     republic: serializable(republicKeeperRaw),
@@ -494,9 +505,11 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     for (const action of actions) {
       if (!action) continue;
       historicalActions.push({ ...action, action_round: round });
+      if (round !== game.round_number - 1) continue;
       if (suitTargets.length >= 16) continue;
-      for (const law of laws) {
-        if (law.status !== "ENACTED" || law.certification !== "ADJUDICABLE"
+      for (const law of lawHistory) {
+        if (!["ENACTED", "REPEALED", "SUPERSEDED"].includes(law.status) || law.law_kind === "REPEAL"
+          || law.certification !== "ADJUDICABLE"
           || law.effective_from_round > round || (law.effective_until_round > 0 && law.effective_until_round < round)) continue;
         const targetClass = action.target_law_id > 0 && ["AMEND_LAW", "REPEAL_LAW", "VETO_LAW"].includes(action.action_type)
           ? "LAW" : action.target_faction_id === "" ? "NONE"
@@ -505,7 +518,6 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
         const key = `${law.law_id}|${action.action_type}|${targetClass}`;
         if (held.has(key)) continue;
         const defendantFactionId = action.faction_id;
-        if (defendantFactionId === action.faction_id) continue;
         suitTargets.push({ actionRound: round, actionType: action.action_type, defendantFactionId,
           lawId: law.law_id, lawTitle: law.title, targetClass });
         if (suitTargets.length >= 16) break;

@@ -48,17 +48,18 @@ export default function CaseLawPage() {
               const segments = highlightQuote(law?.text ?? "", holding.quote);
               const quoteFound = segments.some((segment) => segment.highlighted);
               const keyParts = holding.key.split("|");
+              const origin = snapshot.cases.find((item) => item.case_id === holding.case_id);
               const summaryCases = snapshot.cases.filter((item) => item.status === "SUMMARY" && item.holding_case_id === holding.case_id);
               return <details className="holding-row" id={`holding-case-${holding.case_id}`} key={`${holding.key}-${holding.case_id}`}>
                 <summary><span className="holding-key"><b>{keyParts[1] ?? holding.action_type}</b><i>{keyParts[2] ?? holding.target_class}</i></span>
                   <span className={`holding-label holding-${holding.label.toLowerCase()}`}>{holding.label === "NOT_COVERED" ? "SAFE HARBOR" : holding.label.replaceAll("_", " ")}</span>
-                  <span>Case #{holding.case_id}</span></summary>
+                  <span>Case #{holding.case_id}</span><span className="holding-quote">“{holding.quote || "No quote"}”</span></summary>
                 <div className="case-law-detail">
                   {law ? <p>{segments.map((segment, index) => segment.highlighted ? <mark key={index}>{segment.text}</mark> : <span key={index}>{segment.text}</span>)}
                     {!quoteFound ? <strong className="quote-warning">Quoted text is not present in the retained law text; showing the plain text.</strong> : null}</p>
                     : <p>{holding.quote ? <mark>{holding.quote}</mark> : "No quote was recorded for this label."}</p>}
-                  <div className="holding-meta"><span>Label <b>{holding.label}</b></span><span>Key <code>{holding.key}</code></span><span>Recorded {new Date(holding.recorded_at * 1000).toLocaleString()}</span>
-                    <span>Ruling digest <code>{holding.ruling_digest}</code></span><span>Originating case #{holding.case_id}</span></div>
+                  <div className="holding-meta"><span>Label <b>{holding.label}</b></span><span>Key <code>{holding.key}</code></span><span>Recorded {new Date(holding.recorded_at * 1000).toISOString()}</span>
+                    <span>Ruling digest <code>{holding.ruling_digest}</code></span><span>Originating case #{holding.case_id}{origin ? ` · ${origin.case_reference} · ${origin.status}` : " · outside the retained docket window"}</span></div>
                   {summaryCases.length ? <div className="summary-case-links"><strong>Summary cases citing this holding</strong>{summaryCases.map((item) => <a href={`#holding-case-${holding.case_id}`} key={item.case_id}>Case #{item.case_id} · {item.case_reference}</a>)}</div> : null}
                   <Link href="/" className="secondary-button">Open the docket</Link>
                 </div>

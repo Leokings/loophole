@@ -1,6 +1,7 @@
 import type { RepublicSnapshot } from "@/lib/types";
 
 const now = Math.floor(Date.now() / 1000);
+const demoHoldingRecordedAt = Math.floor(Date.UTC(2026, 8, 10) / 1000);
 const law1 = "No faction may UNDERMINE a faction that holds public office.";
 const law2 = "No faction may UNDERMINE any other faction.";
 
@@ -38,8 +39,8 @@ export const demoSnapshot: RepublicSnapshot = {
     { action_round: 4, case_id: 3, case_reference: "TRADITIONALISTS-v-REVOLUTIONARIES-03", source: "HUMAN", filed_by: "0x1111", plaintiff_faction_id: "TRADITIONALISTS", defendant_faction_id: "REVOLUTIONARIES", law_id: 1, law_title: "Officeholder Protection", law_text: law1, claim_text: "The earlier action targeted a faction outside the protected officeholder class.", evidence_json: "{}", evidence_digest: "0x9abc", target_class: "NON_OFFICEHOLDER", key: "1|UNDERMINE|NON_OFFICEHOLDER", plaintiff_brief: "", defense_brief: "", status: "DECIDED", filed_at: now - 2100, brief_deadline: now - 1900, label: "NOT_COVERED", quote: "holds public office", verdict: "NO_VIOLATION", sanction: "NONE", rule_text: "This action class is outside the cited rule.", holding_case_id: 3, ruling_digest: "0xef01", decided_at: now - 1900 },
   ],
   holdings: [
-    { action_type: "UNDERMINE", case_id: 3, key: "1|UNDERMINE|NON_OFFICEHOLDER", label: "NOT_COVERED", law_id: 1, quote: "holds public office", recorded_at: now - 1900, ruling_digest: "0xef01", target_class: "NON_OFFICEHOLDER" },
-    { action_type: "UNDERMINE", case_id: 4, key: "2|UNDERMINE|NON_OFFICEHOLDER", label: "COVERED_BREACH", law_id: 2, quote: "No faction may UNDERMINE any other faction.", recorded_at: now - 700, ruling_digest: "0xabcd", target_class: "NON_OFFICEHOLDER" },
+    { action_type: "UNDERMINE", case_id: 3, key: "1|UNDERMINE|NON_OFFICEHOLDER", label: "NOT_COVERED", law_id: 1, quote: "holds public office", recorded_at: demoHoldingRecordedAt - 1900, ruling_digest: "0xef01", target_class: "NON_OFFICEHOLDER" },
+    { action_type: "UNDERMINE", case_id: 4, key: "2|UNDERMINE|NON_OFFICEHOLDER", label: "COVERED_BREACH", law_id: 2, quote: "No faction may UNDERMINE any other faction.", recorded_at: demoHoldingRecordedAt - 700, ruling_digest: "0xabcd", target_class: "NON_OFFICEHOLDER" },
   ],
   registry: { holding_count: 2, safe_harbor_count: 1, breach_count: 1, compliant_count: 0, court_address: "0x2222222222222222222222222222222222222222", contract_version: "1.0.0", policy_version: "LOOPHOLE_CASE_LAW_V1" },
   keeperStatus: { republic: { now, phase: "COMMIT", ops: [] }, court: { now, ops: [] } },
