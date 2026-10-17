@@ -866,10 +866,63 @@ def test_file_suit_costs_influence_and_emits_filing(direct_vm, direct_deploy, di
     assert posts[0]["calldata"]["args"][0] == "R2-REFORMERS-MERCHANTS-1"
 
 
-def test_holdings_unavailable_fails_closed(direct_vm, direct_deploy):
+def test_holdings_read_failure_offers_no_suits(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = deploy_republic(direct_vm, direct_deploy)
-    assert contract._read_holdings() == []
-    assert contract._suit_targets(2, []) == []
+    from genlayer.py.types import Address
+
+    direct_vm.sender = direct_alice
+    contract.court_address = Address(direct_bob)
+    contract.caselaw_address = Address(direct_alice)
+    contract.round_number = type(contract.round_number)(1)
+    contract._store_action({
+        "faction_id": "MERCHANTS", "action_type": "UNDERMINE", "target_faction_id": "REFORMERS",
+        "target_law_id": 0, "law_title": "", "law_text": "",
+        "rationale": "A recorded political action targets a rival faction.", "stances": [],
+    }, Address(direct_alice), "HUMAN")
+    contract._store_action({
+        "faction_id": "TRADITIONALISTS", "action_type": "PROPOSE_LAW", "target_faction_id": "",
+        "target_law_id": 0, "law_title": "Office protection",
+        "law_text": "No faction may UNDERMINE a faction that holds public office.",
+        "rationale": "A clear rule describes the scope for actions targeting officeholders.", "stances": [],
+    }, Address(direct_alice), "HUMAN")
+    contract._create_law(contract.round_actions["1:TRADITIONALISTS"], "STATUTE", 0)
+    law = contract.laws[1]
+    law.status = "ENACTED"
+    law.certification = "ADJUDICABLE"
+    law.effective_from_round = type(law.effective_from_round)(1)
+    contract.laws[1] = law
+    contract.active_law_ids[law.law_id] = True
+    contract.active_law_count = type(contract.active_law_count)(1)
+    contract.round_number = type(contract.round_number)(2)
+
+    def failing_caselaw_hook(vm, request):
+        if "CallContract" in request:
+            call = request["CallContract"].get("calldata", {})
+            if call.get("method") == "get_holdings_for_laws":
+                raise RuntimeError("simulated CaseLaw read failure")
+        return None
+
+    direct_vm._gl_call_hook = failing_caselaw_hook
+    holdings, holdings_ok = contract._read_holdings()
+    assert holdings == []
+    assert holdings_ok is False
+    suit_targets = contract._suit_targets(2, holdings, holdings_ok)
+    assert suit_targets == []
+    snapshot = contract._snapshot()
+    menu = contract._legal_options("REFORMERS", snapshot, contract._law_view(), {}, False, suit_targets)
+    assert not any(item["action_type"] == "FILE_SUIT" for item in menu)
+
+    direct_vm.sender = direct_alice
+    contract.claim_faction("REFORMERS")
+    game = contract.get_game()
+    advance_time_to(direct_vm, game["commit_deadline"] - 1)
+    contract.commit_action("REFORMERS", "a" * 64)
+    advance_time_to(direct_vm, game["commit_deadline"])
+    with direct_vm.expect_revert("ACTION_SUIT_TARGET"):
+        contract.reveal_action(
+            "REFORMERS", "FILE_SUIT", "MERCHANTS", 1, "", "",
+            "The previous recorded action appears to breach the enacted office protection rule.", "[]", "retry-nonce",
+        )
 
 def test_world_initializes_offices_season_and_default_objectives(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)

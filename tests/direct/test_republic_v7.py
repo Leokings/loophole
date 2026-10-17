@@ -213,7 +213,7 @@ def test_worst_case_prompt_fits_without_overflow(direct_vm, direct_deploy, direc
         for law_id in [((case_id - 1) % 16) + 1]
     ]
 
-    monkeypatch.setattr(contract_module.AutonomousRepublic, "_read_holdings", lambda self: mock_holdings)
+    monkeypatch.setattr(contract_module.AutonomousRepublic, "_read_holdings", lambda self: (mock_holdings, True))
     prompts = []
     original_prompt = contract_module._ai_action_prompt
 

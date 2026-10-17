@@ -1437,26 +1437,27 @@ class AutonomousRepublic(gl.Contract):
             ids.append(law_id)
         return ids
 
-    def _read_holdings(self) -> list[dict]:
+    def _read_holdings(self) -> tuple[list[dict], bool]:
         if self.caselaw_address == ZERO_ADDRESS:
-            return []
+            return [], False
         law_ids: list[int] = []
         target_round = max(1, int(self.round_number) - 1)
         law_ids = self._eligible_case_law_ids(target_round)
         if not law_ids:
-            return []
+            return [], True
         try:
             result: list[dict] = []
             for offset in range(0, len(law_ids), 16):
-                result.extend(gl.get_contract_at(self.caselaw_address).get_holdings_for_laws(
+                result.extend(gl.get_contract_at(self.caselaw_address).view().get_holdings_for_laws(
                     _canonical_json(law_ids[offset:offset + 16])
                 ))
-            return result
+            return result, True
         except Exception:
-            return []
+            return [], False
 
-    def _suit_targets(self, round_number: int, holdings: list[dict]) -> list[dict]:
-        if round_number < 2 or self.court_address == ZERO_ADDRESS or self.caselaw_address == ZERO_ADDRESS:
+    def _suit_targets(self, round_number: int, holdings: list[dict], holdings_ok: bool = True) -> list[dict]:
+        if (not holdings_ok or round_number < 2 or self.court_address == ZERO_ADDRESS
+                or self.caselaw_address == ZERO_ADDRESS):
             return []
         holding_by_key = {item["key"]: item for item in holdings if isinstance(item, dict) and "key" in item}
         target_round = round_number - 1
@@ -2517,6 +2518,7 @@ class AutonomousRepublic(gl.Contract):
             _expected("FACTION_HAS_NO_CONTROLLER")
         if self._control_is_expired(faction):
             _expected("FACTION_CONTROL_EXPIRED")
+        holdings, holdings_ok = self._read_holdings()
         action = _canonical_action_values(
             faction.faction_id,
             action_type,
@@ -2529,7 +2531,7 @@ class AutonomousRepublic(gl.Contract):
             self._law_view(),
             self._active_crisis_snapshot(),
             _is_election_round(int(self.round_number)),
-            self._suit_targets(int(self.round_number), self._read_holdings()),
+            self._suit_targets(int(self.round_number), holdings, holdings_ok),
         )
         stances = _strict_stances_json(stances_json, self._open_law_ids(int(self.round_number)))
         return self._commitment_for(faction, action, stances, nonce)
@@ -3063,7 +3065,7 @@ class AutonomousRepublic(gl.Contract):
             _expected("ACTION_NOT_COMMITTED")
         if key in self.round_actions:
             _expected("ACTION_ALREADY_REVEALED")
-        holdings = self._read_holdings()
+        holdings, holdings_ok = self._read_holdings()
         action = _canonical_action_values(
             faction.faction_id,
             action_type,
@@ -3076,7 +3078,7 @@ class AutonomousRepublic(gl.Contract):
             self._law_view(),
             self._active_crisis_snapshot(),
             _is_election_round(int(self.round_number)),
-            self._suit_targets(int(self.round_number), holdings),
+            self._suit_targets(int(self.round_number), holdings, holdings_ok),
         )
         stances = _strict_stances_json(stances_json, self._open_law_ids(int(self.round_number)))
         expected_commitment = self._commitment_for(faction, action, stances, nonce)
@@ -3182,8 +3184,8 @@ class AutonomousRepublic(gl.Contract):
         current_round = int(self.round_number)
         snapshot = self._snapshot()
         law_view = self._law_view()
-        holdings = self._read_holdings()
-        suit_targets = self._suit_targets(current_round, holdings)
+        holdings, holdings_ok = self._read_holdings()
+        suit_targets = self._suit_targets(current_round, holdings, holdings_ok)
         active_crisis = self._active_crisis_snapshot()
         offices = self._office_snapshot()
         election_open = _is_election_round(current_round)
