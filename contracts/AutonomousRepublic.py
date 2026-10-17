@@ -1488,10 +1488,10 @@ class AutonomousRepublic(gl.Contract):
                 key = _holding_key(law_id, action.action_type, target_class)
                 holding = holding_by_key.get(key)
                 label = holding.get("label", "") if holding else ""
-                if label in ("NOT_COVERED", "COVERED_COMPLIANT"):
-                    continue
                 candidates.append({"defendant_faction_id": defendant_id, "law_id": law_id,
-                                   "key": key, "holding_label": label})
+                                   "key": key, "holding_label": label,
+                                   "action_round": target_round, "action_type": action.action_type,
+                                   "target_class": target_class, "law_title": law.title})
                 if len(candidates) >= 16:
                     return candidates
         return candidates
@@ -2393,7 +2393,13 @@ class AutonomousRepublic(gl.Contract):
         if previous_round > 0 and previous_round in self.round_summaries_json:
             last_summary = json.loads(self.round_summaries_json[previous_round])
         holdings, holdings_ok = self._read_holdings()
-        suit_targets = self._suit_targets(int(self.round_number), holdings, holdings_ok)
+        suit_targets: list[dict] = []
+        first_action_round = max(1, int(self.round_number) - 8)
+        for action_round in range(first_action_round, int(self.round_number)):
+            suit_targets.extend(self._suit_targets(action_round + 1, holdings, holdings_ok))
+            if len(suit_targets) >= 16:
+                suit_targets = suit_targets[:16]
+                break
         return _public_json_value({
             "game": game,
             "factions": factions,

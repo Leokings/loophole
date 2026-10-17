@@ -39,13 +39,14 @@ export async function readBoundedRepublicSnapshot(
   const [registryRaw, holdingResults] = caseLawAddress
     ? await Promise.all([
       read(caseLawAddress, "get_registry_summary").then(serializable),
-      Promise.all(batches((republic.laws as Array<{ law_id: number }> ?? []).map((law) => law.law_id), 16)
+      Promise.all(batches((republic.laws as Array<{ law_id: number }> ?? []).map((law) => law.law_id), 64)
         .map((ids) => read(caseLawAddress, "get_holdings_for_laws", [JSON.stringify(ids)]).then(serializable))),
     ])
     : [null, []];
 
   const court = courtRaw as ({ cases: CourtCase[]; court: CourtState; keeper_status: KeeperStatus; storage_stats: StorageStats } | null);
   const lawHistory = (republic.laws ?? []) as RepublicSnapshot["lawHistory"];
+  const rawSuitTargets = (republic.suit_targets ?? []) as Array<Record<string, unknown>>;
   const cases = (court?.cases ?? []).map((item) => {
     const pendingHolding = item.label !== "UNCLEAR" && item.status !== "EXPIRED" && !item.holding_present;
     const pendingOutcome = item.verdict !== "AMBIGUOUS" && item.status !== "EXPIRED" && !item.outcome_present;
@@ -91,13 +92,13 @@ export async function readBoundedRepublicSnapshot(
     storageStats: { republic: republicStats, court: court?.storage_stats ?? null },
     holdings: holdingResults.flatMap((result) => result as RepublicSnapshot["holdings"]),
     registry: registryRaw as RepublicSnapshot["registry"],
-    suitTargets: (republic.suit_targets ?? []).map((target: Record<string, unknown>) => ({
-      actionRound: target.action_round,
-      actionType: target.action_type,
-      defendantFactionId: target.defendant_faction_id,
-      lawId: target.law_id,
-      lawTitle: target.law_title,
-      targetClass: target.target_class,
+    suitTargets: rawSuitTargets.map((target) => ({
+      actionRound: Number(target.action_round),
+      actionType: String(target.action_type),
+      defendantFactionId: String(target.defendant_faction_id),
+      lawId: Number(target.law_id),
+      lawTitle: String(target.law_title),
+      targetClass: String(target.target_class),
     })) as RepublicSnapshot["suitTargets"],
     historicalActions: (republic.recent_actions ?? []) as RepublicSnapshot["historicalActions"],
     lawHistory,

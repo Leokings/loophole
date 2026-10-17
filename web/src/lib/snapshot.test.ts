@@ -50,13 +50,11 @@ describe("bounded public snapshot reads", () => {
       caseLaw: "caselaw",
     });
 
-    expect(read).toHaveBeenCalledTimes(5);
     expect(read.mock.calls.length).toBeLessThanOrEqual(8);
     expect(read.mock.calls.map(([, method]) => method)).toEqual([
       "get_public_snapshot",
       "get_docket",
       "get_registry_summary",
-      "get_holdings_for_laws",
       "get_holdings_for_laws",
     ]);
     expect(snapshot.game.law_count).toBe(520);

@@ -10,17 +10,10 @@ import {
   transactionExplorerUrl,
   waitForFinalizedTransaction,
 } from "@/lib/genlayer";
-import type { CourtCase, HistoricalAction, RepublicSnapshot } from "@/lib/types";
+import type { CourtCase, RepublicSnapshot } from "@/lib/types";
 
 function sentenceCase(value: string) {
   return value ? value.toLowerCase().replaceAll("_", " ") : "Awaiting judgment";
-}
-
-function targetClass(action: HistoricalAction, lawId: number, sponsorId: string) {
-  if (action.target_law_id > 0 && ["AMEND_LAW", "REPEAL_LAW", "VETO_LAW"].includes(action.action_type)) return "LAW";
-  if (!action.target_faction_id) return "NONE";
-  if (action.target_faction_id === sponsorId) return "LAW_SPONSOR";
-  return action.target_was_officeholder ? "OFFICEHOLDER" : "OTHER_FACTION";
 }
 
 function HighlightedLaw({ text, quote }: { text: string; quote: string }) {
@@ -113,7 +106,9 @@ export function CourtPanel({
     && (!law.effective_until_round || actionRound <= law.effective_until_round));
   const selectedLawId = eligibleLaws.some((item) => item.law_id === lawId) ? lawId : eligibleLaws[0]?.law_id ?? 0;
   const citedLaw = eligibleLaws.find((law) => law.law_id === selectedLawId);
-  const key = action && citedLaw ? `${selectedLawId}|${action.action_type}|${targetClass(action, selectedLawId, citedLaw.sponsor_faction_id)}` : "";
+  const suitTarget = action ? snapshot.suitTargets.find((target) => target.actionRound === actionRound
+    && target.defendantFactionId === selectedDefendant && target.lawId === selectedLawId) : undefined;
+  const key = suitTarget?.key ?? "";
   const existingHolding = snapshot.holdings.find((holding) => holding.key === key);
   const currentCases = useMemo(() => ({
     open: snapshot.cases.filter((item) => item.status === "BRIEFING" || item.status === "STAYED"),
@@ -144,7 +139,7 @@ export function CourtPanel({
   }
 
   async function fileCase() {
-    if (!action || !citedLaw || claim.trim().length < 20) throw new Error("Choose a recorded action and a certified law effective on that round, then write a claim of at least 20 characters.");
+    if (!action || !citedLaw || !suitTarget || claim.trim().length < 20) throw new Error("Choose a contract-listed recorded action and an effective law, then write a claim of at least 20 characters.");
     if (isDemo) { onToast("Case filing shown in demonstration mode. Live filing freezes the selected action and law onchain."); return; }
     const account = wallet || await onConnect();
     const caseReference = reference || `${selectedFactionId}-R${actionRound}-${selectedDefendant}-L${selectedLawId}-${Date.now().toString(36)}`;
@@ -207,10 +202,10 @@ export function CourtPanel({
           <option value="">Choose a faction with a recorded action</option>{availableDefendants.map((record) => <option key={record.faction_id} value={record.faction_id}>{record.faction_id} · {record.action_type}</option>)}</select></label>
         <label><span>Cited law (certified and effective then)</span><select value={selectedLawId} onChange={(event) => setLawId(Number(event.target.value))} required>
           <option value={0}>Choose one law</option>{eligibleLaws.map((law) => <option key={law.law_id} value={law.law_id}>#{law.law_id} · {law.title}</option>)}</select></label>
-        {action && citedLaw ? <div className="key-preview"><span>Computed holding key</span><code>{key}</code><p>Recorded action: {action.action_type}{action.target_faction_id ? ` · target ${action.target_faction_id}` : ""}</p>
+        {action && citedLaw ? <div className="key-preview"><span>Contract-computed holding key</span>{suitTarget ? <code>{key}</code> : <p>The contract has not listed this action and law as eligible for filing.</p>}<p>Recorded action: {action.action_type}{action.target_faction_id ? ` · target ${action.target_faction_id}` : ""}</p>
           {existingHolding ? <strong>This will be decided instantly by precedent: {existingHolding.label}.</strong> : null}</div> : null}
         <label><span>Claim</span><textarea rows={5} maxLength={1200} minLength={20} value={claim} onChange={(event) => setClaim(event.target.value)} placeholder="Explain how this recorded action violated the cited rule." /></label>
-        <button className="primary-button full" type="submit" disabled={isPending || !action || !citedLaw || claim.trim().length < 20}>Freeze evidence & file</button>
+        <button className="primary-button full" type="submit" disabled={isPending || !action || !citedLaw || !suitTarget || claim.trim().length < 20}>Freeze evidence & file</button>
       </form>
     </div>
   </section>;

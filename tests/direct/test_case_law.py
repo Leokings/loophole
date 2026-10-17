@@ -69,7 +69,7 @@ def test_holdings_are_listed_by_law(direct_vm, direct_deploy, direct_bob):
     ]
     assert caselaw.get_holding_for_case(3)["label"] == "COVERED_BREACH"
     with direct_vm.expect_revert("LAW_IDS"):
-        caselaw.get_holdings_for_laws(json.dumps(list(range(1, 18))))
+        caselaw.get_holdings_for_laws(json.dumps(list(range(1, 66))))
 
 
 def test_key_must_match_components(direct_vm, direct_deploy, direct_bob):
