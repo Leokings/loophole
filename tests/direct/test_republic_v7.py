@@ -141,6 +141,34 @@ def test_prompt_shortening_is_reported_without_overflow(direct_vm, direct_deploy
     assert '"prompt_overflow":false' in summary
 
 
+def test_ai_prompt_sentences_are_intact(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    contract_module = next(
+        module for module in sys.modules.values()
+        if getattr(module, "CONTRACT_VERSION", None) == "2.0.0"
+        and hasattr(module, "_ai_action_prompt")
+    )
+    common = (
+        contract.republic_id, int(contract.round_number), int(contract.stability), contract._snapshot(),
+        contract._law_view(), [], {}, contract._active_crisis_snapshot(), contract._office_snapshot(),
+        False, contract._season_state(), [],
+    )
+    action_prompt = contract_module._ai_action_prompt(*common)
+    audit_prompt = contract_module._ai_audit_prompt(
+        contract.republic_id, int(contract.round_number), int(contract.stability), contract._snapshot(),
+        contract._law_view(), [], [], contract._active_crisis_snapshot(), contract._office_snapshot(),
+        False, contract._season_state(), [],
+    )
+    faction_sentence = "Each faction must pursue its own doctrine and resources independently; do not coordinate factions as a team."
+    holding_sentence = (
+        "Holdings are binding court precedent for the listed law version: a NOT_COVERED holding (safe_harbor true) "
+        "means that action type against that target class is not covered by the law."
+    )
+    assert faction_sentence in action_prompt
+    assert holding_sentence in action_prompt
+    assert holding_sentence in audit_prompt
+
+
 def test_uncertified_law_expires_and_unadjudicable_law_is_terminal(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
     advance_with_ai(contract, direct_vm, [
