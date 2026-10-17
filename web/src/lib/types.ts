@@ -13,11 +13,11 @@ export type Law = {
   proposed_round: number; resolved_round: number; sponsor_faction_id: string; status: string; support_votes: number;
   text: string; title: string; veto_deadline_round: number;
 };
-export type CrisisResponse = { faction_id: string; response: string; judgment?: string; quote?: string; score: number };
+export type CrisisResponse = { faction_id: string; response: string; judgment?: string; quote?: string };
 export type Crisis = {
   closes_after_round: number; crisis_id: number; description: string; opened_round: number; resolution_json: string;
-  resolution_standard: string; success_criterion: string; response_count: number; responses: CrisisResponse[];
-  severity: number; severity_source: string; stability_after: number; stability_before: number; status: string;
+  judging_deadline?: number; outcome?: string; success_criterion: string; response_count: number; responses: CrisisResponse[];
+  severity: number; severity_source?: string; stability_after: number; stability_before: number; status: string;
   title: string; total_response_score: number;
 };
 export type GameState = {

@@ -369,9 +369,25 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
       .catch(() => null),
   );
   const crisisRecord = crisisRaw ? serializable<Crisis & { responses_json?: string }>(crisisRaw) : null;
-  const crisis = crisisRecord
-    ? { ...crisisRecord, responses: parseJson(crisisRecord.responses_json, []) }
-    : null;
+  const crisis = crisisRecord ? (() => {
+    const responses = parseJson<Array<{ faction_id: string; response: string; judgment?: string; quote?: string }>>(crisisRecord.responses_json, []);
+    const finalJudgment = parseJson<{ labels?: Record<string, string>; quotes?: Record<string, string> }>(crisisRecord.resolution_json, {});
+    return {
+      ...crisisRecord,
+      severity_source: "CODE_DERIVED",
+      outcome: crisisRecord.outcome || "",
+      responses: responses.map((item) => {
+        let judgment = item.judgment ?? "";
+        let quote = item.quote ?? "";
+        if (judgment.startsWith("{")) {
+          const parsed = parseJson<{ label?: string; quote?: string }>(judgment, {});
+          judgment = parsed.label ?? "INSUFFICIENT";
+          quote = parsed.quote ?? "";
+        }
+        return { ...item, judgment: finalJudgment.labels?.[item.faction_id] ?? judgment, quote: finalJudgment.quotes?.[item.faction_id] ?? quote };
+      }),
+    };
+  })() : null;
 
   const laws = serializable<Array<Law | null>>(lawsRaw).filter((law): law is Law => law !== null
     && ["ENACTED", "PENDING"].includes(law.status));

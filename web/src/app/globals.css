@@ -986,6 +986,28 @@ summary:focus-visible {
   text-transform: uppercase;
 }
 
+.certification-badge { border: 1px solid var(--line-strong); border-radius: 99px; color: var(--muted); display: inline-block; font-size: 7px; letter-spacing: 0.08em; margin-top: 5px; padding: 4px 7px; text-transform: uppercase; }
+.certification-adjudicable { border-color: rgba(77, 213, 181, 0.4); color: #7ae0c5; }
+.certification-unadjudicable { border-color: rgba(230, 124, 103, 0.45); color: #ef9a88; }
+.quote-warning { color: var(--amber); display: inline-block; margin-left: 6px; }
+.law-row mark, .crisis-results mark, .case-card mark, .case-law-detail mark { background: rgba(198, 231, 111, 0.2); color: var(--acid); padding: 0 2px; }
+.crisis-footer { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.crisis-results { border-top: 1px solid var(--line); display: grid; gap: 9px; margin-top: 12px; padding-top: 10px; }
+.crisis-results article { align-items: center; display: grid; gap: 6px 10px; grid-template-columns: 1fr auto; }
+.crisis-results p { color: var(--muted); font-size: 9px; grid-column: 1 / -1; line-height: 1.5; margin: 0; }
+.resolution-outcome { color: var(--acid); font-size: 10px; }
+.round-summary { margin-top: 18px; padding: 22px; }
+.round-summary-grid { display: grid; gap: 9px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.round-summary-grid article { background: rgba(255,255,255,.025); border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 7px; padding: 12px; }
+.round-summary-grid strong { font-size: 10px; }
+.round-summary-grid span { color: var(--acid); font-size: 8px; letter-spacing: .08em; }
+.round-summary-grid p { color: var(--muted); font-size: 9px; margin: 0; text-transform: capitalize; }
+.stance-selector { border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 12px; margin-top: 15px; padding: 14px; }
+.stance-selector > div p { color: var(--muted); font-size: 9px; margin: 5px 0 0; }
+.stance-selector label { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.stance-selector label span { color: var(--muted); font-size: 9px; }
+.stance-selector select { max-width: 180px; }
+
 .law-status,
 .case-status {
   border: 1px solid var(--line-strong);
