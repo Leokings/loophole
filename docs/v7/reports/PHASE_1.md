@@ -49,3 +49,18 @@ New tests by work package:
 
 ## Public method list
 `open_crisis`, `judge_crisis_response`, `close_crisis`, `get_game`, `get_keeper_status`, `get_storage_stats`, `certify_law`, `get_factions_json`, `get_faction`, `get_controlled_faction`, `is_active_faction_controller`, `preview_action_commitment`, `get_round_action`, `get_round_summary`, `get_law`, `get_office`, `get_offices_json`, `get_objective`, `get_crisis`, `get_season_summary`, `preview_objective_commitment`, `commit_objective`, `reveal_objective`, `finalize_season`, `get_court_ruling`, `is_court_action_sanctioned`, `set_court_address`, `apply_court_ruling`, `claim_faction`, `release_faction`, `recover_abandoned_faction`, `commit_action`, `reveal_action`, `advance_round_fallback`, `advance_round`.
+
+## Fixes
+Claude's Phase 1 review was approved for Phase 3 after three required fixes. Each required fix landed in its own commit:
+
+| Review item | Change | Commit | Regression coverage |
+| --- | --- | --- | --- |
+| 1. Repeal orders consumed law slots | Passed repeal orders now end as `APPLIED`, never enter the active-law set, and both the order and repealed law enter the bounded retirement queue. Sponsor rewards are preserved. | `8896f1f` | `test_repeal_frees_a_code_slot`; `test_repeal_reopens_a_full_code` |
+| 2. Certification closures read storage-backed law text | `certify_law` snapshots `law.text` into a plain local before defining nondeterministic functions; leader, validator and post-consensus canonicalization use that snapshot. A sweep found the other Phase 1 leader/validator paths already use snapshots. | `6a7d8c2` | `test_certification_rejects_non_verbatim_quote`; `test_certification_injection_text_cannot_force_adjudicable`; `test_uncertified_law_expires_and_unadjudicable_law_is_terminal` |
+| 3. Target officeholder metadata only covered UNDERMINE | `target_was_officeholder` now reflects any non-empty faction target, regardless of action type. | `099a8ad` | `test_officeholder_flag_is_recorded_for_any_faction_target` |
+
+Both optional review items were also applied in `7666d62`. Round summaries now separate `prompt_shortened` from `prompt_overflow`; overflow is true only when shortening still cannot fit and the round falls back for all missing factions. The empty `crisis_resolution` and `opened_crisis` fields were replaced with `crisis_status_after: {crisis_id, status}`; the web summary type and demo fixture match the new shape. Tests: `test_prompt_shortening_is_reported_without_overflow`, `test_prompt_overflow_settles_with_fallbacks`, and the summary assertions in `test_garbage_ai_output_falls_back_every_faction_without_failing`.
+
+Post-fix `python scripts/verify.py --integration` — **passed**: contract lint/validation/typecheck passed; direct tests **79 passed**; five-validator GLSim **1 passed**; web lint/typecheck/build passed with **36 tests passed**; scheduler typecheck passed with **5 tests passed**; deployment dry run passed. Web emitted only the existing Vite `esbuild` deprecation warnings. This gate is local/GLSim evidence, not live StudioNet proof.
+
+The full-code regression seeds `active_law_count = 16` after enacting one representative law, then confirms a successful repeal releases a slot and the next statute enacts. This avoids building 16 separate law histories while exercising the exact `CODE_FULL` boundary. The retirement regression advances through a season rollover and confirms both records are pruned after the 24-round history window.
