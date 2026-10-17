@@ -43,6 +43,7 @@ export default function HowToPlayPage() {
         </Link>
         <nav aria-label="Guide navigation">
           <Link href="/">Chamber</Link>
+          <Link href="/case-law">Case law</Link>
           <Link className="active" href="/how-to-play" aria-current="page">How to play</Link>
         </nav>
         <Link className="guide-enter" href="/">Enter the republic <span aria-hidden="true">→</span></Link>
@@ -182,10 +183,11 @@ export default function HowToPlayPage() {
           </div>
           <div className="court-flow">
             <article><span>01</span><h3>File</h3><p>Name the defendant, action round, cited law, and exact violation.</p></article>
-            <article><span>02</span><h3>Brief</h3><p>Both sides make arguments against the frozen evidence.</p></article>
-            <article><span>03</span><h3>Rule</h3><p>Validators audit the proposed judgment and any sanction.</p></article>
-            <article><span>04</span><h3>Appeal</h3><p>A final ruling can establish precedent for future disputes.</p></article>
+            <article><span>02</span><h3>Brief</h3><p>Both sides make arguments against the frozen action and law.</p></article>
+            <article><span>03</span><h3>Decide</h3><p>Validators agree on a narrow label and an exact quote from the cited rule.</p></article>
+            <article><span>04</span><h3>Remember</h3><p>Finalized holdings guide later cases under that law version.</p></article>
           </div>
+          <aside className="guide-tip"><strong>Stances do not use your turn.</strong><p>Support, oppose, or abstain on each open law while sealing your move. The sponsor counts as one support vote.</p><Link href="/case-law">Browse public holdings →</Link></aside>
         </section>
 
         <section className="guide-section guide-faq" aria-labelledby="faq-title">

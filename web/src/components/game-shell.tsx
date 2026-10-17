@@ -148,6 +148,7 @@ export function GameShell() {
               {item === "court" && (snapshot.court?.open_case_count ?? 0) > 0 ? <i>{snapshot.court?.open_case_count}</i> : null}
             </button>
           ))}
+          <Link href="/case-law">Case law</Link>
           <Link href="/how-to-play">How to play</Link>
         </nav>
         <div className="network-cluster">
