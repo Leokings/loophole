@@ -544,7 +544,11 @@ export async function judgeCrisis(ctx) {
   const judged = parseJson(await read(ctx, "republic", "get_crisis", [crisisId], "A"), "get_crisis");
   const response = parseJson(judged.responses_json, "crisis responses").find((entry) => entry.faction_id === "REFORMERS");
   const judgment = parseJson(response?.judgment, "crisis judgment");
-  if (!judgment || !["MET", "NOT_MET", "INSUFFICIENT"].includes(judgment.label) || !judgment.quote) {
+  const validLabel = Boolean(judgment) && ["MET", "NOT_MET", "INSUFFICIENT"].includes(judgment.label);
+  const validQuote = judgment?.label === "INSUFFICIENT"
+    ? judgment.quote === ""
+    : typeof judgment?.quote === "string" && Boolean(judgment.quote.trim());
+  if (!validLabel || !validQuote) {
     throw new ScenarioStopError("Crisis judgment was outside the allowed labels or had no evidence quote.");
   }
   await finalizedStep(ctx, step("crisis:close", "Close the crisis", "A", "republic", "close_crisis", [crisisId]));

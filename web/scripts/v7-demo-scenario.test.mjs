@@ -5,6 +5,7 @@ import {
   ScenarioStopError,
   assertExpectedLabel,
   awaitEffects,
+  judgeCrisis,
   play,
   revision2StagePlan,
   scenarioConstants,
@@ -120,6 +121,37 @@ describe("V7 code-defined live demo scenario", () => {
     await stages.find((stage) => stage.id === "r5").run(ctx);
     const reveal = events.find((event) => event.type === "commit-or-reveal" && event.method === "reveal_action" && event.args?.[0] === "REFORMERS");
     expect(reveal?.args?.[1]).toBe("RESPOND_CRISIS");
+  });
+
+  it("accepts an INSUFFICIENT crisis judgment with an empty quote", async () => {
+    let judged = false;
+    const calls = [];
+    const ctx = {
+      state: { ...baseState(), crisis_opened: 1 },
+      read: async ({ contract, method }) => {
+        calls.push({ contract, method });
+        if (contract === "republic" && method === "get_crisis") {
+          return {
+            responses_json: JSON.stringify([{
+              faction_id: "REFORMERS",
+              response: "Reopen the routes and publish the ledger.",
+              judgment: judged ? JSON.stringify({ label: "INSUFFICIENT", quote: "" }) : "",
+            }]),
+          };
+        }
+        if (method === "get_game") return { active_crisis_id: 0 };
+        return {};
+      },
+      executeStep: async (step) => {
+        calls.push({ contract: step.contract, method: step.method });
+        if (step.method === "judge_crisis_response") judged = true;
+        return { ...step, status: "FINALIZED_SUCCESS" };
+      },
+      saveState: async () => {},
+    };
+    await expect(judgeCrisis(ctx)).resolves.toBeUndefined();
+    expect(calls.filter(({ method }) => method === "judge_crisis_response")).toHaveLength(1);
+    expect(calls.filter(({ method }) => method === "close_crisis")).toHaveLength(1);
   });
 
   it("stops on the injection case returning an unexpected label", async () => {
