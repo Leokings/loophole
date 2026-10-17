@@ -257,6 +257,11 @@ export function transactionExplorerUrl(hash: string): string {
   return base ? `${base.replace(/\/$/, "")}/tx/${hash}` : "";
 }
 
+export function contractExplorerUrl(address: string): string {
+  const base = selectedChain.blockExplorers?.default.url;
+  return base && ADDRESS_PATTERN.test(address) ? `${base.replace(/\/$/, "")}/address/${address}` : "";
+}
+
 export function createNonce(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
@@ -307,10 +312,9 @@ export async function previewObjectiveCommitment(
 
 async function readCourtCases(state: CourtState): Promise<CourtCase[]> {
   const openIds = hasLiveCourt ? serializable<number[]>(await read(courtAddress, "get_open_case_ids", [64])) : [];
-  const terminalFirst = Math.max(1, state.case_count - 19);
-  const terminalIds: number[] = [];
-  for (let id = state.case_count; id >= terminalFirst; id -= 1) terminalIds.push(id);
-  const ids = [...new Set([...openIds, ...terminalIds])].sort((a, b) => b - a);
+  const recentIds: number[] = [];
+  for (let id = state.case_count; id >= Math.max(1, state.case_count - 79); id -= 1) recentIds.push(id);
+  const ids = [...new Set([...openIds, ...recentIds])].sort((a, b) => b - a);
   const cases = await Promise.all(ids.map(async (id) => {
     try {
       return serializable<CourtCase>(await read(courtAddress, "get_case", [id]));
@@ -318,7 +322,12 @@ async function readCourtCases(state: CourtState): Promise<CourtCase[]> {
       return null;
     }
   }));
-  return cases.filter((item): item is CourtCase => item !== null);
+  const openSet = new Set(openIds);
+  const retained = cases.filter((item): item is CourtCase => item !== null);
+  const open = retained.filter((item) => openSet.has(item.case_id));
+  const terminal = retained.filter((item) => !openSet.has(item.case_id)
+    && ["DECIDED", "SUMMARY", "EXPIRED"].includes(item.status)).slice(0, 20);
+  return [...open, ...terminal].sort((a, b) => b.case_id - a.case_id);
 }
 
 export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
@@ -365,9 +374,7 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
   );
   const currentActionRequests = factions.map((faction) =>
     read(republicAddress, "get_round_action", [game.round_number, faction.faction_id])
-      .then((action) => serializable<RoundAction>(action))
-      .catch(() => null),
-  );
+      .then((action) => serializable<RoundAction>(action)).catch(() => null));
   const crisisRecord = crisisRaw ? serializable<Crisis & { responses_json?: string }>(crisisRaw) : null;
   const crisis = crisisRecord ? (() => {
     const responses = parseJson<Array<{ faction_id: string; response: string; judgment?: string; quote?: string }>>(crisisRecord.responses_json, []);
@@ -389,15 +396,33 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     };
   })() : null;
 
-  const laws = serializable<Array<Law | null>>(lawsRaw).filter((law): law is Law => law !== null
-    && ["ENACTED", "PENDING"].includes(law.status));
-  const holdingsRaw = hasLiveCaseLaw
-    ? await read(caseLawAddress, "get_holdings_for_laws", [JSON.stringify(laws.filter((law) => law.status === "ENACTED").map((law) => law.law_id))]).catch(() => [])
-    : [];
-  const holdings = serializable<RepublicSnapshot["holdings"]>(holdingsRaw);
-  const lawById = new Map(laws.map((law) => [law.law_id, law]));
+  const lawHistory = serializable<Array<Law | null>>(lawsRaw).filter((law): law is Law => law !== null);
+  const laws = lawHistory.filter((law) => ["ENACTED", "PENDING"].includes(law.status));
+  const holdingLawIds = lawHistory.map((law) => law.law_id);
+  const holdings = hasLiveCaseLaw ? (await Promise.all(Array.from({ length: Math.ceil(holdingLawIds.length / 16) }, (_, index) =>
+    read(caseLawAddress, "get_holdings_for_laws", [JSON.stringify(holdingLawIds.slice(index * 16, index * 16 + 16))]).catch(() => []))))
+    .flatMap((result) => serializable<RepublicSnapshot["holdings"]>(result)) : [];
+  const lawById = new Map(lawHistory.map((law) => [law.law_id, law]));
   const cases = court ? await readCourtCases(court) : [];
-  const enrichedCases = cases.map((item) => ({ ...item, law_text: lawById.get(item.law_id)?.text ?? "", law_title: lawById.get(item.law_id)?.title ?? "" }));
+  const settledCases = cases.filter((item) => ["DECIDED", "SUMMARY"].includes(item.status));
+  const effects = await Promise.all(settledCases.map(async (item) => {
+    const [outcome, holding] = await Promise.all([
+      read(republicAddress, "get_case_outcome", [item.case_id]).then(String).catch(() => ""),
+      item.label === "UNCLEAR" ? Promise.resolve({}) : read(courtAddress, "get_holding_for_case", [item.case_id]).catch(() => ({})),
+    ]);
+    return [item.case_id, { outcome, holding: serializable<Record<string, unknown>>(holding) }] as const;
+  }));
+  const effectByCase = new Map(effects);
+  const enrichedCases = cases.map((item) => {
+    const caseEffects = effectByCase.get(item.case_id);
+    const holdingMissing = item.label !== "UNCLEAR" && ["DECIDED", "SUMMARY"].includes(item.status)
+      && !caseEffects?.holding?.key;
+    const outcomeMissing = item.verdict !== "AMBIGUOUS" && ["DECIDED", "SUMMARY"].includes(item.status)
+      && !caseEffects?.outcome;
+    const effectsPending: CourtCase["effectsPending"] = holdingMissing && outcomeMissing ? "holding and outcome"
+      : holdingMissing ? "holding" : outcomeMissing ? "outcome" : undefined;
+    return { ...item, law_text: lawById.get(item.law_id)?.text ?? "", law_title: lawById.get(item.law_id)?.title ?? "", effectsPending };
+  });
   const keeperStatus: RepublicSnapshot["keeperStatus"] = {
     republic: serializable(republicKeeperRaw),
     court: courtKeeperRaw ? serializable(courtKeeperRaw) : null,
@@ -407,12 +432,15 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     court: courtStatsRaw ? serializable(courtStatsRaw) : null,
   };
   const suitTargets: RepublicSnapshot["suitTargets"] = [];
+  const historicalActions: RepublicSnapshot["historicalActions"] = [];
   const held = new Set(holdings.filter((item) => ["NOT_COVERED", "COVERED_COMPLIANT"].includes(item.label)).map((item) => item.key));
-  for (let round = Math.max(1, game.round_number - 8); round < game.round_number && suitTargets.length < 16; round += 1) {
+  for (let round = Math.max(1, game.round_number - 8); round < game.round_number; round += 1) {
     const actions = await Promise.all(factions.map((faction) => read(republicAddress, "get_round_action", [round, faction.faction_id])
       .then((action) => serializable<RoundAction>(action)).catch(() => null)));
     for (const action of actions) {
       if (!action) continue;
+      historicalActions.push({ ...action, action_round: round });
+      if (suitTargets.length >= 16) continue;
       for (const law of laws) {
         if (law.status !== "ENACTED" || law.certification !== "ADJUDICABLE"
           || law.effective_from_round > round || (law.effective_until_round > 0 && law.effective_until_round < round)) continue;
@@ -422,13 +450,12 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
               : action.target_was_officeholder ? "OFFICEHOLDER" : "OTHER_FACTION";
         const key = `${law.law_id}|${action.action_type}|${targetClass}`;
         if (held.has(key)) continue;
-        const defendantFactionId = action.target_faction_id || action.faction_id;
+        const defendantFactionId = action.faction_id;
         if (defendantFactionId === action.faction_id) continue;
         suitTargets.push({ actionRound: round, actionType: action.action_type, defendantFactionId,
           lawId: law.law_id, lawTitle: law.title, targetClass });
         if (suitTargets.length >= 16) break;
       }
-      if (suitTargets.length >= 16) break;
     }
   }
 
@@ -447,6 +474,8 @@ export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
     holdings,
     registry: registryRaw ? serializable(registryRaw) : null,
     suitTargets,
+    historicalActions,
+    lawHistory,
     offices: parseJson<Office[]>(officesRaw, []),
     objectives: serializable<Objective[]>(await Promise.all(objectiveRequests)),
     summary: summaryRaw ? parseJson<RoundSummary | null>(summaryRaw, null) : null,

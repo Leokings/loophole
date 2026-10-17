@@ -1007,6 +1007,26 @@ summary:focus-visible {
 .stance-selector label { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
 .stance-selector label span { color: var(--muted); font-size: 9px; }
 .stance-selector select { max-width: 180px; }
+.case-list > section { margin-bottom: 22px; }
+.case-card { padding: 17px; }
+.case-facts { color: var(--dim); display: grid; font-size: 8px; gap: 5px; letter-spacing: .04em; margin: 10px 0; }
+.case-facts code, .key-preview code { color: var(--acid); overflow-wrap: anywhere; }
+.case-law-block { background: rgba(255,255,255,.025); border-left: 2px solid var(--acid); margin: 12px 0; padding: 10px 12px; }
+.case-law-block strong { color: var(--muted); font-size: 9px; }
+.case-law-block p, .case-briefs p { color: var(--muted); font-size: 10px; line-height: 1.5; margin: 7px 0 0; }
+.case-summary-link, .case-summary-link a { color: var(--acid); font-size: 9px; }
+.effects-pending { background: rgba(229, 168, 93, .08); border: 1px solid rgba(229, 168, 93, .28); border-radius: 9px; margin-top: 12px; padding: 12px; }
+.effects-pending strong { color: var(--amber); font-size: 9px; }
+.effects-pending p, .effects-pending small { color: var(--muted); display: block; font-size: 9px; line-height: 1.45; margin: 6px 0 0; }
+.case-actions { border-top: 1px solid var(--line); display: grid; gap: 12px; margin-top: 12px; padding-top: 12px; }
+.case-actions form { display: grid; gap: 8px; }
+.case-actions form textarea { min-height: 74px; }
+.case-links { border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; padding-top: 10px; }
+.case-links a, .case-links span { color: var(--dim); font-size: 8px; text-decoration: underline; }
+.key-preview { background: rgba(255,255,255,.025); border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 6px; padding: 11px; }
+.key-preview span { color: var(--dim); font-size: 8px; text-transform: uppercase; }
+.key-preview p, .key-preview strong { font-size: 9px; margin: 0; }
+.key-preview strong { color: var(--amber); }
 
 .law-status,
 .case-status {

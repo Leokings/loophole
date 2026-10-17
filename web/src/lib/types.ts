@@ -18,7 +18,7 @@ export type Crisis = {
   closes_after_round: number; crisis_id: number; description: string; opened_round: number; resolution_json: string;
   judging_deadline?: number; outcome?: string; success_criterion: string; response_count: number; responses: CrisisResponse[];
   severity: number; severity_source?: string; stability_after: number; stability_before: number; status: string;
-  title: string; total_response_score: number;
+  title: string;
 };
 export type GameState = {
   active_crisis_id: number; commit_deadline: number; commit_seconds: number; control_lease_seconds: number;
@@ -46,8 +46,9 @@ export type CourtCase = {
   label: string; quote: string; verdict: string; sanction: string; rule_text: string; holding_case_id: number;
   ruling_digest: string; decided_at: number; effectsPending?: "holding" | "outcome" | "holding and outcome" | "finality window";
 };
+export type HistoricalAction = RoundAction & { action_round: number };
 export type Objective = { awarded_points: number; commitment: string; committed_by: string; faction_id: string; objective_type: string; revealed: boolean; source: string; target_faction_id: string };
-export type CourtState = { case_count: number; finalized_case_count: number; max_case_age_rounds: number; open_case_count: number; open_case_head: number; open_case_tail: number; precedent_count: number };
+export type CourtState = { case_count: number; open_case_count: number; contract_version?: string; policy_version?: string; republic_address?: string; caselaw_address?: string; brief_seconds?: number; resolution_seconds?: number };
 export type KeeperOp = { method: string; args: Array<string | number> };
 export type KeeperStatus = { now: number; phase?: string; ops: KeeperOp[] };
 export type StorageStats = Record<string, number>;
@@ -58,6 +59,8 @@ export type RepublicSnapshot = {
   game: GameState; laws: Law[]; offices: Office[]; objectives: Objective[]; summary: RoundSummary | null;
   keeperStatus: { republic: KeeperStatus; court: KeeperStatus | null }; storageStats: { republic: StorageStats; court: StorageStats | null };
   holdings: Holding[]; registry: CaseLawRegistry | null; suitTargets: SuitTarget[];
+  historicalActions: HistoricalAction[];
+  lawHistory: Law[];
 };
 export type ActionDraft = { action_type: string; faction_id: string; law_text: string; law_title: string; rationale: string; target_faction_id: string; target_law_id: number; stances?: Array<{ law_id: number; stance: "SUPPORT" | "OPPOSE" | "ABSTAIN" }> };
 export type PendingReveal = ActionDraft & { finalized?: boolean; nonce: string; round: number; transactionHash: string };
