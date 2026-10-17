@@ -226,10 +226,13 @@ export async function play(ctx, round, actions, options = {}) {
     if (action.action_type === ACTIONS.UNDERMINE && action.expected_target_class) {
       await assertTargetClass(ctx, action, action.expected_target_class);
     }
-    const nonce = nonceFor(ctx, round, faction);
+    const nonceKey = `${round}:${faction}`;
+    const nonce = state.nonces[nonceKey] || nonceFor(ctx, round, faction);
     nonces[faction] = nonce;
-    state.nonces[`${round}:${faction}`] = nonce;
-    await save(ctx);
+    if (!state.nonces[nonceKey]) {
+      state.nonces[nonceKey] = nonce;
+      await save(ctx);
+    }
     const commitment = await read(ctx, "republic", "preview_action_commitment", actionArgs(action, nonce), factionSeat(faction));
     await acceptedStep(ctx, step(`${options.stageId || `r${round}`}:commit:${faction}`, `Round ${round}: commit ${faction}`, factionSeat(faction), "republic", "commit_action", [faction, String(commitment)], { round, phase: "COMMIT" }));
   }
@@ -517,7 +520,10 @@ async function resolveCase(ctx, caseName, expectedLabel, options = {}) {
     await finalizedStep(ctx, step(`case:${caseName}:plaintiff-brief`, `Brief case ${caseName} for plaintiff`, plaintiffSeat, "court", "submit_brief", [id, courtCase.plaintiff_faction_id, "The recorded action and frozen law support this concise claim."]));
     await finalizedStep(ctx, step(`case:${caseName}:defense-brief`, `Brief case ${caseName} for defense`, defendantSeat, "court", "submit_brief", [id, courtCase.defendant_faction_id, "The recorded action should be assessed only against the quoted law."]));
   }
-  if (typeof ctx.waitUntil === "function") await ctx.waitUntil(Number(courtCase.brief_deadline || 0) + Number(options.waitExtraMs || 0));
+  if (typeof ctx.waitUntil === "function") {
+    // GenLayer view timestamps are seconds; the runner clock is milliseconds.
+    await ctx.waitUntil(Number(courtCase.brief_deadline || 0) * 1000 + Number(options.waitExtraMs || 0));
+  }
   const ruling = await finalizedStep(ctx, step(`case:${caseName}:resolve`, `Resolve case ${caseName}`, "A", "court", "resolve_case", [id], { case_name: caseName, case_link_role: "ruling" }));
   state.steps[`case:${caseName}:resolve`] = { ...state.steps[`case:${caseName}:resolve`], case_name: caseName, case_id: id, case_link_role: "ruling" };
   await save(ctx);
