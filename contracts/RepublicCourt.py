@@ -57,6 +57,7 @@ MAX_CASE_AGE_ROUNDS = 8
 MAX_OPEN_CASE_BATCH = 64
 MAX_KEEPER_CASE_BATCH = 12
 MAX_RETAINED_TERMINAL_CASES = 64
+RECOVERY_DELAY_SECONDS = 1800
 MIN_QUOTE_CHARS = 8
 MAX_QUOTE_CHARS = 240
 
@@ -725,6 +726,7 @@ class RepublicCourt(gl.Contract):
         expire_ops: list[dict] = []
         resolve_ops: list[dict] = []
         stayed_ops: list[dict] = []
+        recover_ops: list[dict] = []
         for case_id in self.get_open_case_ids(MAX_OPEN_CASE_BATCH):
             case = self.cases[case_id]
             if case.status == STATUS_BRIEFING:
@@ -741,7 +743,32 @@ class RepublicCourt(gl.Contract):
                     if deciding_id not in self.cases or self.cases[deciding_id].status in _TERMINAL_STATUSES:
                         if deciding_id in self.cases and self.cases[deciding_id].label == LABEL_UNCLEAR:
                             stayed_ops.append({"method": "resolve_stayed_case", "args": [case_id]})
-        ops = (expire_ops + resolve_ops + stayed_ops)[:MAX_KEEPER_CASE_BATCH]
+        recent_count = min(int(self.terminal_count), 16)
+        first_offset = int(self.terminal_count) - recent_count
+        for offset in range(first_offset, int(self.terminal_count)):
+            slot = (int(self.terminal_head) + offset) % MAX_RETAINED_TERMINAL_CASES
+            case_id = int(self.terminal_case_ids[slot])
+            if case_id not in self.cases:
+                continue
+            case = self.cases[case_id]
+            if (case.status not in (STATUS_DECIDED, STATUS_SUMMARY)
+                    or now < int(case.decided_at) + RECOVERY_DELAY_SECONDS):
+                continue
+            holding_missing = False
+            outcome_missing = False
+            if case.label != LABEL_UNCLEAR:
+                try:
+                    holding_missing = not self._holding_for_key(case.key)
+                except Exception:
+                    holding_missing = True
+            if case.verdict != VERDICT_AMBIGUOUS:
+                try:
+                    outcome_missing = not self._republic_view().get_case_outcome(int(case.case_id))
+                except Exception:
+                    outcome_missing = True
+            if holding_missing or outcome_missing:
+                recover_ops.append({"method": "recover_case_effects", "args": [case_id]})
+        ops = (expire_ops + resolve_ops + stayed_ops + recover_ops)[:MAX_KEEPER_CASE_BATCH]
         return {"now": now, "ops": ops}
 
 

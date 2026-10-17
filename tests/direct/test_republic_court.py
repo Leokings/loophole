@@ -356,6 +356,43 @@ def test_effects_are_emitted_on_finalized_only(direct_vm, direct_deploy, direct_
     assert {post["calldata"]["method"] for post in latest["posts"]} == {"record_holding", "apply_case_outcome"}
 
 
+def test_keeper_lists_recovery_for_missing_effects_after_delay(direct_vm, direct_deploy, direct_alice, direct_bob):
+    republic, caselaw = _addresses(direct_alice, direct_bob)
+    court = deploy_court(direct_vm, direct_deploy, republic, caselaw)
+    latest = install_republic_hook(direct_vm, direct_alice, direct_bob)
+    _file(court, direct_vm, direct_alice)
+    case = court.cases[1]
+    decided_at = int(datetime.datetime.fromisoformat(TEST_TIME.replace("Z", "+00:00")).timestamp())
+    case.status = "DECIDED"
+    case.label = "COVERED_BREACH"
+    case.verdict = "VIOLATION"
+    case.decided_at = type(case.decided_at)(decided_at)
+    court._mark_terminal(case)
+
+    direct_vm.warp(as_iso(decided_at + 1799))
+    assert court.get_keeper_status()["ops"] == []
+    direct_vm.warp(as_iso(decided_at + 1800))
+    assert court.get_keeper_status()["ops"] == [{"method": "recover_case_effects", "args": [1]}]
+
+    key = court.get_case(1)["key"]
+    latest["holdings"][key] = {"key": key, "label": "COVERED_BREACH"}
+    latest["outcomes"][1] = '{"verdict":"VIOLATION"}'
+    assert court.get_keeper_status()["ops"] == []
+
+    latest["action"]["round_number"] = 2
+    latest["action"]["target_was_officeholder"] = False
+    direct_vm.sender = direct_alice
+    assert court.file_case("CASE-UNCLEAR", "REFORMERS", "MERCHANTS", 2, 1,
+                           "A separate recorded action is submitted for a narrow legal review.") == 2
+    unclear = court.cases[2]
+    unclear.status = "DECIDED"
+    unclear.label = "UNCLEAR"
+    unclear.verdict = "AMBIGUOUS"
+    unclear.decided_at = type(unclear.decided_at)(decided_at)
+    court._mark_terminal(unclear)
+    assert court.get_keeper_status()["ops"] == []
+
+
 def test_court_retains_bounded_terminal_cases(direct_vm, direct_deploy, direct_alice, direct_bob):
     setup_sdk_paths(CONTRACT_PATH, "v0.2.16")
     from genlayer.py import calldata
