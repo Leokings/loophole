@@ -751,3 +751,22 @@ env.KEEPER_URL ("https://loophole-zeta.vercel.app/api/...")      Environment Var
 
 Loophole verification passed.
 ```
+
+## Fixes
+
+Applied the Phase 3 review findings as one commit per item on `v7`:
+
+| Review item | Commit | Change | Named test |
+| --- | --- | --- | --- |
+| 1 | `c31fb79` | Defined scope labels, target facts, and the `NOT_COVERED` tie-break in the court prompt. | `test_case_prompt_defines_scope_labels_with_tie_break` |
+| 2 | `d4121b5` | Added delayed keeper recovery for decided cases whose holding or outcome is still missing. | `test_keeper_lists_recovery_for_missing_effects_after_delay` |
+| 3 | `88fb19c` | Restored intact precedent language in the action and audit prompts. | `test_ai_prompt_sentences_are_intact` |
+| 4 | `3755a98` | Bounded prompt context and compacted menus and holdings, with deterministic overflow reductions. | `test_worst_case_prompt_fits_without_overflow` |
+| 5 | `ea00b43` | Disabled suit targets when holdings cannot be read and used the SDK's `.view()` proxy for CaseLaw reads. | `test_holdings_read_failure_offers_no_suits`; the GLSim AI-suit lifecycle also verifies the linked read path. |
+| 6 | `f3a07bd` | Reserved legal-menu capacity for suit options while keeping basic resource actions available. | `test_menu_reserves_suit_slots_when_code_is_full` |
+| 7 | `00e6c07` | Pruned retired court-action replay state alongside round history. | `test_replayed_outcome_after_retirement_is_rejected` |
+| 8 (optional) | `1aaf6aa` | Retained pending decider state through the finality delay before a stayed case can take over. | `test_pruning_pending_decider_keeps_stayed_case_behind_finality_delay` |
+
+**Verification:** `python scripts/verify.py --integration` passed after the fixes. Contract lint, validation, and type checks passed; all **97 direct tests** passed; both **five-validator GLSim integration tests** passed; the web check passed (lint, typecheck, 36 tests, production build); scheduler checks passed (typecheck, 5 tests, dry-run deploy). The first integration run exposed the incorrect direct proxy call in item 5; the SDK-compatible `.view()` call fixed it, and the final full run passed. Existing Vite `esbuild` deprecation warnings remain.
+
+No live network deployment or release was performed.
