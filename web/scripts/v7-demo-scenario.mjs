@@ -455,6 +455,7 @@ async function round2(ctx) {
 }
 
 async function round3(ctx) {
+  const ids = lawIds(ctx);
   await play(ctx, 3, [
     commonAction("MERCHANTS", ACTIONS.RUN, "Stand for the Executive office.", { law_title: "EXECUTIVE" }),
     commonAction("REFORMERS", ACTIONS.RUN, "Stand for the Speaker office.", { law_title: "SPEAKER" }),
