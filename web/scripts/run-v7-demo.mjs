@@ -63,6 +63,10 @@ function resultNames(receipt, leader) {
   return { consensus, execution };
 }
 
+function leaderReturnValue(leader) {
+  return leader?.result ?? leader?.return_value ?? leader?.returnValue ?? null;
+}
+
 function receiptErrors(entries) { return JSON.stringify(entries); }
 
 export async function finalizedResult(client, txHash) {
@@ -73,7 +77,7 @@ export async function finalizedResult(client, txHash) {
   if (receipt.statusName !== TransactionStatus.FINALIZED) throw new Error(`Transaction did not reach finality (${receipt.statusName ?? "unknown"}).`);
   const { entries, leader } = leaderReceipt(receipt);
   const { consensus, execution } = resultNames(receipt, leader);
-  return { consensus, execution, errors: receiptErrors(entries), receipt };
+  return { consensus, execution, return_value: leaderReturnValue(leader), errors: receiptErrors(entries), receipt };
 }
 
 async function acceptedResult(client, txHash) {
@@ -85,7 +89,7 @@ async function acceptedResult(client, txHash) {
   const { entries, leader } = leaderReceipt(receipt);
   const { consensus, execution } = resultNames(receipt, leader);
   if (execution !== "SUCCESS" && execution !== "FINISHED_WITH_RETURN") throw new Error(`Accepted transaction has leader execution ${execution}.`);
-  return { consensus, execution, errors: receiptErrors(entries), receipt };
+  return { consensus, execution, return_value: leaderReturnValue(leader), errors: receiptErrors(entries), receipt };
 }
 
 function sameJson(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
@@ -144,6 +148,7 @@ export async function executeStep(step, state, clients, accounts, contracts, opt
 
   record.execution_result = result.execution;
   record.consensus_result = result.consensus;
+  record.return_value = result.return_value;
   record.votes = result.receipt.consensus_data?.votes ?? result.receipt.consensusData?.votes ?? null;
   record.error_codes = result.errors;
   if (options.acceptedOnly) {
@@ -197,6 +202,7 @@ export async function executeAcceptedBatch(steps, state, clients, accounts, cont
       const result = await acceptedResult(clients[record.wallet], record.tx_hash);
       record.execution_result = result.execution;
       record.consensus_result = result.consensus;
+      record.return_value = result.return_value;
       record.votes = result.receipt.consensus_data?.votes ?? result.receipt.consensusData?.votes ?? null;
       record.error_codes = result.errors;
       record.status = "ACCEPTED_PENDING_FINALITY";
@@ -218,6 +224,7 @@ export async function finalitySweep(state, clients) {
     const result = await finalizedResult(clients[record.wallet], record.tx_hash);
     record.execution_result = result.execution;
     record.consensus_result = result.consensus;
+    record.return_value = result.return_value;
     record.votes = result.receipt.consensus_data?.votes ?? result.receipt.consensusData?.votes ?? null;
     record.error_codes = result.errors;
     if (!isAccepted(result)) {

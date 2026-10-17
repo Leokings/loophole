@@ -358,8 +358,20 @@ export async function file(ctx, plaintiffSeat, defendant, actionRound, lawId, cl
   const caseRecord = parseJson(await read(ctx, "court", "get_case", [caseId], seat), "get_case");
   state.case_keys[caseName] = caseRecord.key;
   state.steps[`case:${caseName}:file`] = { ...state.steps[`case:${caseName}:file`], case_name: caseName, case_id: caseId, case_link_role: "filing" };
+  if (options.submitBriefs !== false) await submitBriefs(ctx, caseName, caseRecord);
   await save(ctx);
   return caseRecord;
+}
+
+async function submitBriefs(ctx, caseName, courtCase) {
+  if (!courtCase || courtCase.status !== "BRIEFING") return;
+  const id = Number(courtCase.case_id);
+  const plaintiffSeat = factionSeat(courtCase.plaintiff_faction_id);
+  const defendantSeat = factionSeat(courtCase.defendant_faction_id);
+  await acceptedBatch(ctx, [
+    step(`case:${caseName}:plaintiff-brief`, `Brief case ${caseName} for plaintiff`, plaintiffSeat, "court", "submit_brief", [id, courtCase.plaintiff_faction_id, "The recorded action and frozen law support this concise claim."]),
+    step(`case:${caseName}:defense-brief`, `Brief case ${caseName} for defense`, defendantSeat, "court", "submit_brief", [id, courtCase.defendant_faction_id, "The recorded action should be assessed only against the quoted law."]),
+  ]);
 }
 
 /** Wait for both finality callbacks; recover once after the 30-minute mark. */
@@ -537,12 +549,7 @@ async function resolveCase(ctx, caseName, expectedLabel, options = {}) {
   const id = Number(state.case_ids[caseName]);
   if (!id) throw new Error(`Case ${caseName} is not filed.`);
   const courtCase = parseJson(await read(ctx, "court", "get_case", [id], "A"), "get_case");
-  if (courtCase.status === "BRIEFING") {
-    const plaintiffSeat = factionSeat(courtCase.plaintiff_faction_id);
-    const defendantSeat = factionSeat(courtCase.defendant_faction_id);
-    await finalizedStep(ctx, step(`case:${caseName}:plaintiff-brief`, `Brief case ${caseName} for plaintiff`, plaintiffSeat, "court", "submit_brief", [id, courtCase.plaintiff_faction_id, "The recorded action and frozen law support this concise claim."]));
-    await finalizedStep(ctx, step(`case:${caseName}:defense-brief`, `Brief case ${caseName} for defense`, defendantSeat, "court", "submit_brief", [id, courtCase.defendant_faction_id, "The recorded action should be assessed only against the quoted law."]));
-  }
+  if (courtCase.status === "BRIEFING" && (!courtCase.plaintiff_brief || !courtCase.defense_brief)) await submitBriefs(ctx, caseName, courtCase);
   if (typeof ctx.waitUntil === "function") {
     // GenLayer view timestamps are seconds; the runner clock is milliseconds.
     await ctx.waitUntil(Number(courtCase.brief_deadline || 0) * 1000 + Number(options.waitExtraMs || 0));
@@ -600,6 +607,39 @@ async function summaryCase(ctx) {
   const record = parseJson(await read(ctx, "court", "get_case", [Number(stateFor(ctx).case_ids.D)], "A"), "get_case");
   if (record.status !== "SUMMARY" || Number(record.holding_case_id) !== Number(stateFor(ctx).case_ids.A)) throw new ScenarioStopError("Case D did not receive the expected code-only safe-harbor summary.");
   await recordReadbacks(ctx, "summary", 6);
+}
+
+async function republicGuardSnapshot(ctx) {
+  const game = parseJson(await read(ctx, "republic", "get_game", [], "A"), "get_game");
+  const snapshot = parseJson(await read(ctx, "republic", "get_public_snapshot", [], "A"), "get_public_snapshot");
+  const factions = Array.isArray(snapshot?.factions) ? snapshot.factions : [];
+  return {
+    case_outcome_count: Number(game.case_outcome_count || 0),
+    legitimacies: Object.fromEntries(factions.map((faction) => [faction.faction_id, Number(faction.legitimacy)])),
+  };
+}
+
+async function guards(ctx) {
+  const ids = lawIds(ctx);
+  const before = await republicGuardSnapshot(ctx);
+  await finalizedStep(ctx, step("guard:file-case-from-republic", "Reject an EOA republic filing", "A", "court", "file_case_from_republic", ["V7-GUARD-REPUBLIC", "REFORMERS", "MERCHANTS", 5, ids.rule, "This EOA call must be rejected by the republic-only guard."], { expected_failure: true, expected_error_code: "REPUBLIC_ONLY" }));
+  await finalizedStep(ctx, step("guard:record-holding", "Reject an EOA holding record", "A", "caseLaw", "record_holding", ["1|UNDERMINE|OTHER_FACTION", 1, "UNDERMINE", "OTHER_FACTION", "NOT_COVERED", "A valid-looking quoted rule.", 1, "0000000000000000000000000000000000000000000000000000000000000000"], { expected_failure: true, expected_error_code: "COURT_ONLY" }));
+  const recovery = await finalizedStep(ctx, step("guard:recover-effects", "Replay delivered case effects", "A", "court", "recover_case_effects", [Number(stateFor(ctx).case_ids.A)], { case_name: "A" }));
+  const effects = parseJson(recovery?.return_value, "recover_case_effects");
+  if (!effects || effects.holding_reemitted !== false || effects.outcome_reemitted !== false) {
+    throw new ScenarioStopError("Case A recovery did not report both effect flags as false.");
+  }
+  const after = await republicGuardSnapshot(ctx);
+  if (JSON.stringify(before) !== JSON.stringify(after)) throw new ScenarioStopError("Recovering already-delivered case effects changed republic read-backs.");
+  stateFor(ctx).guard_checks = { recovery: effects, unchanged: true };
+  await save(ctx);
+}
+
+async function assertCrisisSkipped(ctx) {
+  const summary = parseJson(await read(ctx, "republic", "get_round_summary", [8], "A"), "get_round_summary");
+  if (summary?.crisis_skipped !== true) throw new ScenarioStopError("Round 8 did not record the unopened crisis slot as skipped.");
+  stateFor(ctx).crisis_skipped = true;
+  await save(ctx);
 }
 
 async function round7(ctx) {
