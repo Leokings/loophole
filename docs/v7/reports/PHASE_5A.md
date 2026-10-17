@@ -73,3 +73,24 @@ Final verification after the fixes:
 - `npm run check` in `web/` — passed: lint, TypeScript, **50 tests across 11 files**, and production build.
 
 No StudioNet or Vercel deployment, live demo, proof assembly, push, or Portal submission was run. Phase 5B remains owner-gated and the evidence gate remains not ready until a separately approved live deployment and finalized scenario produce the public proof manifest.
+
+## Fixes (round 2)
+
+The six blockers in `docs/v7/reviews/PHASE_5A_FIXES_REVIEW.md` were applied on `v7`, one implementation commit per blocker:
+
+| Review item | Commit | Result |
+| --- | --- | --- |
+| 1. Strict stance payloads | `023df14` | Scenario stances now serialize only as the contract list shape (`[]` or `[{'law_id': n, 'stance': 'SUPPORT'}]`); the Vitest scenario test checks the preview calldata. |
+| 2. UNDERMINE target fields | `8f3e7c7` | `UNDERMINE` always sends `target_law_id = 0`; the scenario keeps its law used for target classification in `class_law_id`, and the calldata test covers the separation. |
+| 3. Round-three law ids | `7221282` | `round3` now resolves its law ids before building the scripted action list. |
+| 4. Timing and scheduling | `71b8faa` | Commit/reveal defaults are 600 seconds; previews are read as a batch, commits and reveals are submitted before acceptance waits, `advance_round` proceeds on ACCEPTED, and the Revision 2 READY_TO_ADVANCE stage plan is encoded. The runner also provides the shared 20-reads-per-minute limiter. |
+| 5. Missing stages and assertions | `bbb606a` | Added the EOA authority guards and recovery replay check, the round-8 skipped-crisis assertion, the exact four-action AI fallback assertion, and immediate accepted-only brief submission after filing. Finalized transaction records retain decoded return values for the recovery assertion. |
+| 6. Contract-shape regression coverage | `2dfb13b` | Added `node web/scripts/v7-demo-scenario.mjs --export-actions`, a committed JSON fixture, the offline direct-mode Python shape test, and Vitest coverage for the Revision 2 stage order. |
+
+Validation after round 2:
+
+- `python scripts/verify.py --integration` — passed: contract lint/validation/type checks, **98 direct tests**, **2 five-validator GLSim integration tests**, web checks, scheduler tests and dry-run deployment; final output `Loophole verification passed.`
+- `npm run check` in `web/` — passed: ESLint, TypeScript, **52 tests across 11 files**, and the optimized Next.js production build.
+- `node --check` passed for the revised scenario and runner scripts.
+
+No StudioNet or Vercel deployment, live demo, proof assembly, push, or Portal submission was run. The owner should return this branch for the requested final review before any live run.
