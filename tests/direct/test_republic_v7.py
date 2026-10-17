@@ -1,4 +1,5 @@
 import copy
+import json
 import sys
 
 from test_autonomous_republic import (
@@ -167,6 +168,82 @@ def test_ai_prompt_sentences_are_intact(direct_vm, direct_deploy):
     assert faction_sentence in action_prompt
     assert holding_sentence in action_prompt
     assert holding_sentence in audit_prompt
+
+
+def test_worst_case_prompt_fits_without_overflow(direct_vm, direct_deploy, direct_alice, direct_bob, monkeypatch):
+    factions = [
+        {"id": f"FACTION_{index}", "name": f"Political Faction {index}",
+         "doctrine": "Protect a distinct public interest through practical political choices."}
+        for index in range(8)
+    ]
+    contract = deploy_republic(direct_vm, direct_deploy, factions=factions)
+    contract_module = next(
+        module for module in sys.modules.values()
+        if getattr(module, "CONTRACT_VERSION", None) == "2.0.0"
+        and hasattr(module, "_ai_action_prompt")
+    )
+    u = type(contract.round_number)
+    contract.round_number = u(3)
+    contract.law_count = u(24)
+    contract.active_law_count = u(16)
+    law_text = "A faction must publish its decisions and keep a complete public record. " * 12
+    law_text = law_text[:800].ljust(800, " ")
+    for law_id in range(1, 25):
+        enacted = law_id <= 16
+        law = contract_module.Law(
+            law_id=u(law_id), proposed_round=u(1), sponsor_faction_id="FACTION_0",
+            title=f"Public Rule {law_id}", text=law_text,
+            status="ENACTED" if enacted else "PENDING", support_votes=u(0), oppose_votes=u(0),
+            closes_after_round=u(4), resolved_round=u(0), law_kind="STATUTE", parent_law_id=u(0),
+            effective_from_round=u(1 if enacted else 0), effective_until_round=u(0),
+            veto_deadline_round=u(0), certification="ADJUDICABLE", certification_quote="A faction must publish",
+            constitutional=False,
+        )
+        contract.laws[u(law_id)] = law
+        if enacted:
+            contract.active_law_ids[u(law_id)] = True
+
+    mock_holdings = [
+        {"key": f"{law_id}|UNDERMINE|OTHER_FACTION:{case_id}", "law_id": law_id,
+         "action_type": "UNDERMINE", "target_class": "OTHER_FACTION",
+         "label": "NOT_COVERED" if case_id % 2 else "COVERED_BREACH",
+         "quote": "A quoted public rule phrase that remains short in the model prompt.",
+         "case_id": case_id, "recorded_at": case_id}
+        for case_id in range(1, 41)
+        for law_id in [((case_id - 1) % 16) + 1]
+    ]
+
+    monkeypatch.setattr(contract_module.AutonomousRepublic, "_read_holdings", lambda self: mock_holdings)
+    prompts = []
+    original_prompt = contract_module._ai_action_prompt
+
+    def capture_prompt(*args, **kwargs):
+        prompt = original_prompt(*args, **kwargs)
+        prompts.append(prompt)
+        return prompt
+
+    monkeypatch.setattr(contract_module, "_ai_action_prompt", capture_prompt)
+    choices = [{
+        "faction_id": faction["id"], "option_id": "BUILD_INFLUENCE", "law_title": "", "law_text": "",
+        "rationale": "Build support for this faction's public political goals.", "stances": [],
+    } for faction in factions]
+    direct_vm.mock_llm(r".*selecting CONSENSUS-CRITICAL actions for autonomous factions.*", compact({"actions": choices}))
+    mock_audit(direct_vm)
+    advance_time_to(direct_vm, contract.get_game()["reveal_deadline"])
+    assert contract.advance_round() == 3
+
+    assert len(prompts) == 1
+    assert len(prompts[0]) <= contract_module.MAX_PROMPT_CHARS
+    public_state = json.loads(prompts[0].split("PUBLIC_STATE_JSON=", 1)[1])
+    assert len(public_state["factions"]) == 8
+    assert public_state["election_open"] is True
+    assert len(public_state["laws"]) == 24
+    assert len(public_state["holdings"]) == 24
+    assert all(isinstance(option_id, str) for menu in public_state["menus"].values() for option_id in menu)
+    assert all(set(holding) == {"key", "label", "quote", "safe_harbor"} for holding in public_state["holdings"])
+    assert all(len(holding["quote"]) <= 120 for holding in public_state["holdings"])
+    summary = contract.get_round_summary(3)
+    assert '"prompt_overflow":false' in summary
 
 
 def test_uncertified_law_expires_and_unadjudicable_law_is_terminal(direct_vm, direct_deploy):
