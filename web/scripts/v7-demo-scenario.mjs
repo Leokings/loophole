@@ -163,7 +163,8 @@ function advanceExpectedInfluence(ctx, actions) {
 }
 
 function normalizeStances(stances) {
-  return typeof stances === "string" ? stances : JSON.stringify(stances || {});
+  if (!Array.isArray(stances)) throw new TypeError("Scenario stances must be an array.");
+  return JSON.stringify(stances);
 }
 
 function nonceFor(ctx, round, faction) {
@@ -380,11 +381,11 @@ export async function awaitEffects(ctx, caseName, options = {}) {
 }
 
 function commonAction(faction, actionType, rationale, extra = {}) {
-  return { faction, action_type: actionType, target_faction_id: "", target_law_id: 0, law_title: "", law_text: "", rationale, stances: {}, ...extra };
+  return { faction, action_type: actionType, target_faction_id: "", target_law_id: 0, law_title: "", law_text: "", rationale, stances: [], ...extra };
 }
 
 function stance(faction, lawId, action) {
-  return { ...commonAction(faction, action.action_type, action.rationale, action), stances: { [String(lawId)]: "SUPPORT" } };
+  return { ...commonAction(faction, action.action_type, action.rationale, action), stances: [{ law_id: Number(lawId), stance: "SUPPORT" }] };
 }
 
 function lawIds(ctx) {

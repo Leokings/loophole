@@ -26,7 +26,8 @@ function roundContext() {
     state,
     randomNonce: (currentRound, faction) => `${currentRound}-${faction}-nonce`,
     saveState: async () => events.push({ type: "save", nonces: { ...state.nonces } }),
-    read: async ({ method }) => {
+    read: async ({ method, args }) => {
+      events.push({ type: "read", method, args });
       if (method === "get_public_snapshot") return { factions: FACTIONS.map((faction) => ({ faction_id: faction, influence: influences[faction] })) };
       if (method === "get_game") return { phase, round_number: round, active_crisis_id: 0 };
       if (method === "preview_action_commitment") return "commitment";
@@ -67,11 +68,29 @@ describe("V7 code-defined live demo scenario", () => {
 
   it("persists every nonce before submitting its commit", async () => {
     const { ctx, events } = roundContext();
-    await play(ctx, 1, FACTIONS.map((faction) => ({ faction, action_type: "BUILD_INFLUENCE", rationale: "Build influence for this round." })), { stageId: "test" });
+    await play(ctx, 1, FACTIONS.map((faction) => ({ faction, action_type: "BUILD_INFLUENCE", rationale: "Build influence for this round.", stances: [] })), { stageId: "test" });
     const firstCommit = events.findIndex((event) => event.type === "commit-or-reveal" && event.method === "commit_action");
     expect(firstCommit).toBeGreaterThan(0);
-    expect(events[firstCommit - 1].type).toBe("save");
-    expect(Object.keys(events[firstCommit - 1].nonces)).toEqual(["1:MERCHANTS"]);
+    const nonceSave = events.slice(0, firstCommit).findLast((event) => event.type === "save");
+    expect(nonceSave).toBeTruthy();
+    expect(Object.keys(nonceSave.nonces)).toEqual(["1:MERCHANTS"]);
+  });
+
+  it("serializes stances as the strict contract list shape", async () => {
+    const { ctx, events } = roundContext();
+    await play(ctx, 1, [
+      { faction: "MERCHANTS", action_type: "BUILD_INFLUENCE", rationale: "Build influence for this round.", stances: [] },
+      { faction: "REFORMERS", action_type: "BUILD_INFLUENCE", rationale: "Build influence for this round.", stances: [{ law_id: 2, stance: "SUPPORT" }] },
+      { faction: "TRADITIONALISTS", action_type: "BUILD_INFLUENCE", rationale: "Build influence for this round.", stances: [] },
+      { faction: "REVOLUTIONARIES", action_type: "BUILD_INFLUENCE", rationale: "Build influence for this round.", stances: [] },
+    ], { stageId: "shape" });
+    const previews = events.filter((event) => event.type === "read" && event.method === "preview_action_commitment");
+    expect(previews.map((event) => event.args[7])).toEqual([
+      "[]",
+      '[{"law_id":2,"stance":"SUPPORT"}]',
+      "[]",
+      "[]",
+    ]);
   });
 
   it("stops on the injection case returning an unexpected label", async () => {
