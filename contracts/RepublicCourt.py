@@ -228,6 +228,22 @@ def _case_prompt(record: dict) -> str:
     )
 
 
+def _parse_case_json(prompt: str) -> dict:
+    if len(prompt) > MAX_PROMPT_CHARS:
+        _expected("PROMPT_LIMIT")
+    raw = gl.nondet.exec_prompt(prompt, response_format="json")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw, object_pairs_hook=_reject_duplicate_pairs)
+        except gl.vm.UserError:
+            _llm("JSON_DUPLICATE_KEY")
+        except (TypeError, ValueError, RecursionError):
+            _llm("JSON")
+    if not isinstance(raw, dict):
+        _llm("JSON")
+    return raw
+
+
 class RepublicCourt(gl.Contract):
     owner: Address
     republic_address: Address
@@ -329,6 +345,104 @@ class RepublicCourt(gl.Contract):
     def _claim_key(self, action_round: int, defendant: str, plaintiff: str, law_id: int) -> str:
         return _digest("CLAIM", [str(action_round), defendant, plaintiff, str(law_id)])
 
+    def _holding_for_key(self, key: str) -> dict:
+        holding = self._caselaw_view().get_holding(key)
+        return holding if isinstance(holding, dict) else {}
+
+    def _route_new_case(self, case: CourtCase) -> CourtCase:
+        holding = self._holding_for_key(case.key)
+        if holding:
+            return self._decide_summary(case, holding)
+        if case.key in self.deciding_case_by_key:
+            deciding_id = int(self.deciding_case_by_key[case.key])
+            if deciding_id in self.cases:
+                deciding = self.cases[deciding_id]
+                if deciding.status == STATUS_BRIEFING or (
+                    deciding.status == STATUS_DECIDED and deciding.label != LABEL_UNCLEAR
+                ):
+                    case.status = STATUS_STAYED
+                    self.cases[case.case_id] = case
+                    return case
+        case.status = STATUS_BRIEFING
+        case.brief_deadline = u256(_now_epoch() + int(self.brief_seconds))
+        self.deciding_case_by_key[case.key] = case.case_id
+        self.cases[case.case_id] = case
+        return case
+
+    def _sanction_for(self, label: str, constitutional: bool, season: int, defendant: str) -> str:
+        if label != LABEL_COVERED_BREACH:
+            return SANCTION_NONE
+        violation_key = f"{season}:{defendant}"
+        previous = int(self.season_violations[violation_key]) if violation_key in self.season_violations else 0
+        points = (2 if constitutional else 1) + (1 if previous >= 1 else 0)
+        if points <= 0:
+            return SANCTION_NONE
+        if points == 1:
+            return SANCTION_REPRIMAND
+        if points == 2:
+            return SANCTION_MINOR
+        return SANCTION_MAJOR
+
+    def _set_disposition(self, case: CourtCase, label: str, quote: str, holding_case_id: int,
+                         source_kind: str, season: int) -> CourtCase:
+        evidence = json.loads(case.evidence_json)
+        law = evidence["law"]
+        case.label = label
+        case.quote = quote
+        case.holding_case_id = u256(holding_case_id)
+        case.verdict = VERDICT_VIOLATION if label == LABEL_COVERED_BREACH else (
+            VERDICT_AMBIGUOUS if label == LABEL_UNCLEAR else VERDICT_NO_VIOLATION
+        )
+        case.sanction = self._sanction_for(label, bool(law["constitutional"]), season, case.defendant_faction_id)
+        case.rule_text = (
+            f"Under law #{int(case.law_id)}, {evidence['action']['action_type']} against "
+            f"{case.target_class} is {label} (case {holding_case_id})."
+        )
+        case.ruling_digest = _digest("RULING", [
+            _address_text(gl.message.contract_address), str(int(case.case_id)), case.evidence_digest,
+            case.key, label, quote, case.verdict, case.sanction, source_kind, str(holding_case_id),
+        ])
+        case.decided_at = u256(_now_epoch())
+        if case.verdict == VERDICT_VIOLATION:
+            violation_key = f"{season}:{case.defendant_faction_id}"
+            previous = int(self.season_violations[violation_key]) if violation_key in self.season_violations else 0
+            self.season_violations[violation_key] = u256(previous + 1)
+        return case
+
+    def _emit_holding(self, case: CourtCase) -> None:
+        if case.label == LABEL_UNCLEAR:
+            return
+        gl.get_contract_at(self.caselaw_address).emit(on="finalized").record_holding(
+            case.key, int(case.law_id), json.loads(case.evidence_json)["action"]["action_type"],
+            case.target_class, case.label, case.quote, int(case.case_id), case.ruling_digest,
+        )
+
+    def _emit_outcome(self, case: CourtCase) -> None:
+        if case.verdict == VERDICT_AMBIGUOUS:
+            return
+        gl.get_contract_at(self.republic_address).emit(on="finalized").apply_case_outcome(
+            int(case.case_id), int(case.action_round), case.defendant_faction_id, case.plaintiff_faction_id,
+            case.verdict, case.sanction, case.ruling_digest,
+        )
+
+    def _mark_terminal(self, case: CourtCase) -> CourtCase:
+        self._remove_open_case(int(case.case_id))
+        self.cases[case.case_id] = case
+        return case
+
+    def _decide_summary(self, case: CourtCase, holding: dict) -> CourtCase:
+        if not holding or holding.get("key") != case.key:
+            _expected("HOLDING_INVALID")
+        game = self._republic_view().get_game()
+        season = int(game["season_number"])
+        case = self._set_disposition(
+            case, str(holding["label"]), str(holding["quote"]), int(holding["case_id"]), "SUMMARY", season,
+        )
+        case.status = STATUS_SUMMARY
+        case = self._mark_terminal(case)
+        self._emit_outcome(case)
+        return case
+
     def _build_case(
         self,
         source: str,
@@ -427,6 +541,8 @@ class RepublicCourt(gl.Contract):
         self.case_by_reference[reference] = u256(case_id)
         self.case_by_claim[claim_key] = u256(case_id)
         self._enqueue_open_case(case_id)
+        case = self._route_new_case(case)
+        self.cases[case_id] = case
         return case_id
 
     @gl.public.write
@@ -461,6 +577,139 @@ class RepublicCourt(gl.Contract):
         else:
             case.defense_brief = brief
         self.cases[case_id] = case
+
+    @gl.public.write
+    def resolve_case(self, case_id: int) -> str:
+        _no_value()
+        case = self._require_case(case_id)
+        now = _now_epoch()
+        if case.status != STATUS_BRIEFING or now < int(case.brief_deadline) or now >= int(case.brief_deadline) + int(self.resolution_seconds):
+            _expected("CASE_NOT_RESOLVABLE")
+        evidence = json.loads(case.evidence_json)
+        law_text = str(evidence["law"]["text"])
+        game = self._republic_view().get_game()
+        season = int(game["season_number"])
+        record = {
+            "evidence": evidence,
+            "claim_text": str(case.claim_text),
+            "plaintiff_brief": str(case.plaintiff_brief),
+            "defense_brief": str(case.defense_brief),
+        }
+        prompt = _case_prompt(record)
+        if len(prompt) > MAX_PROMPT_CHARS:
+            _expected("PROMPT_LIMIT")
+
+        def leader_fn():
+            return _canonical_judgment(_parse_case_json(prompt), law_text)
+
+        def validator_fn(leader_result) -> bool:
+            if not isinstance(leader_result, gl.vm.Return):
+                return False
+            try:
+                candidate = _canonical_judgment(leader_result.calldata, law_text)
+                independent = _canonical_judgment(_parse_case_json(prompt), law_text)
+            except gl.vm.UserError:
+                return False
+            return candidate["label"] == independent["label"]
+
+        result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
+        try:
+            result = _canonical_judgment(result, law_text)
+        except gl.vm.UserError:
+            _llm("CASE_RESULT")
+        case = self._set_disposition(case, result["label"], result["quote"], int(case.case_id), "FIRST_IMPRESSION", season)
+        case.status = STATUS_DECIDED
+        case = self._mark_terminal(case)
+        if case.label == LABEL_UNCLEAR:
+            if case.key in self.deciding_case_by_key:
+                del self.deciding_case_by_key[case.key]
+        else:
+            self._emit_holding(case)
+        self._emit_outcome(case)
+        return case.label
+
+    @gl.public.write
+    def expire_case(self, case_id: int) -> None:
+        _no_value()
+        case = self._require_case(case_id)
+        if case.status != STATUS_BRIEFING or _now_epoch() < int(case.brief_deadline) + int(self.resolution_seconds):
+            _expected("CASE_NOT_EXPIRED")
+        case.label = LABEL_UNCLEAR
+        case.verdict = VERDICT_AMBIGUOUS
+        case.sanction = SANCTION_NONE
+        case.status = STATUS_EXPIRED
+        case.decided_at = u256(_now_epoch())
+        if case.key in self.deciding_case_by_key:
+            del self.deciding_case_by_key[case.key]
+        self._mark_terminal(case)
+
+    @gl.public.write
+    def resolve_stayed_case(self, case_id: int) -> str:
+        _no_value()
+        case = self._require_case(case_id)
+        if case.status != STATUS_STAYED:
+            _expected("CASE_NOT_STAYED")
+        holding = self._holding_for_key(case.key)
+        if holding:
+            return self._decide_summary(case, holding).label
+        can_take_over = case.key not in self.deciding_case_by_key
+        if not can_take_over:
+            deciding_id = int(self.deciding_case_by_key[case.key])
+            if deciding_id not in self.cases:
+                can_take_over = True
+            else:
+                deciding = self.cases[deciding_id]
+                can_take_over = deciding.status in _TERMINAL_STATUSES and deciding.label == LABEL_UNCLEAR
+        if not can_take_over:
+            _expected("CASE_STILL_STAYED")
+        case.status = STATUS_BRIEFING
+        case.brief_deadline = u256(_now_epoch() + int(self.brief_seconds))
+        self.deciding_case_by_key[case.key] = case.case_id
+        self.cases[case.case_id] = case
+        return case.status
+
+    @gl.public.write
+    def recover_case_effects(self, case_id: int) -> dict:
+        _no_value()
+        case = self._require_case(case_id)
+        if case.status not in (STATUS_DECIDED, STATUS_SUMMARY):
+            _expected("CASE_EFFECTS_NOT_RECOVERABLE")
+        holding_reemitted = False
+        outcome_reemitted = False
+        if case.label != LABEL_UNCLEAR and not self._holding_for_key(case.key):
+            self._emit_holding(case)
+            holding_reemitted = True
+        outcome = self._republic_view().get_case_outcome(int(case.case_id))
+        if case.verdict != VERDICT_AMBIGUOUS and not outcome:
+            self._emit_outcome(case)
+            outcome_reemitted = True
+        return {"holding_reemitted": holding_reemitted, "outcome_reemitted": outcome_reemitted}
+
+    @gl.public.view
+    def get_keeper_status(self) -> dict:
+        now = _now_epoch()
+        expire_ops: list[dict] = []
+        resolve_ops: list[dict] = []
+        stayed_ops: list[dict] = []
+        for case_id in self.get_open_case_ids(MAX_OPEN_CASE_BATCH):
+            case = self.cases[case_id]
+            if case.status == STATUS_BRIEFING:
+                if now >= int(case.brief_deadline) + int(self.resolution_seconds):
+                    expire_ops.append({"method": "expire_case", "args": [case_id]})
+                elif now >= int(case.brief_deadline):
+                    resolve_ops.append({"method": "resolve_case", "args": [case_id]})
+            elif case.status == STATUS_STAYED:
+                holding = self._holding_for_key(case.key)
+                if holding or case.key not in self.deciding_case_by_key:
+                    stayed_ops.append({"method": "resolve_stayed_case", "args": [case_id]})
+                else:
+                    deciding_id = int(self.deciding_case_by_key[case.key])
+                    if deciding_id not in self.cases or self.cases[deciding_id].status in _TERMINAL_STATUSES:
+                        if deciding_id in self.cases and self.cases[deciding_id].label == LABEL_UNCLEAR:
+                            stayed_ops.append({"method": "resolve_stayed_case", "args": [case_id]})
+        ops = (expire_ops + resolve_ops + stayed_ops)[:MAX_KEEPER_CASE_BATCH]
+        return {"now": now, "ops": ops}
+
 
     @gl.public.view
     def get_case(self, case_id: int) -> dict:
