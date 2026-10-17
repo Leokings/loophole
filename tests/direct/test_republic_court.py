@@ -1,5 +1,6 @@
 import datetime
 import json
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -165,6 +166,19 @@ def test_evidence_freezes_target_class_and_key(direct_vm, direct_deploy, direct_
     assert evidence["action"]["target_was_officeholder"] is True
     assert evidence["target_class"] == case["target_class"]
     assert evidence["key"] == case["key"]
+
+
+def test_case_prompt_defines_scope_labels_with_tie_break(direct_vm, direct_deploy, direct_alice, direct_bob):
+    republic, caselaw = _addresses(direct_alice, direct_bob)
+    deploy_court(direct_vm, direct_deploy, republic, caselaw)
+    module = next(
+        item for item in sys.modules.values()
+        if getattr(item, "POLICY_VERSION", None) == "LOOPHOLE_REPUBLIC_COURT_V5"
+        and hasattr(item, "_case_prompt")
+    )
+    prompt = module._case_prompt({})
+    assert "if the action falls outside a prohibition's stated conditions, the label is NOT_COVERED, never COVERED_COMPLIANT." in prompt
+    assert "target_class and target_was_officeholder are code-computed facts about the recorded action at its action round." in prompt
 
 
 def _mock_label(direct_vm, label, quote="No faction may UNDERMINE a faction that holds public office."):
