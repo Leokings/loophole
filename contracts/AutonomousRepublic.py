@@ -44,6 +44,7 @@ LAW_EXPIRED = "EXPIRED"
 LAW_VETOED = "VETOED"
 LAW_SUPERSEDED = "SUPERSEDED"
 LAW_REPEALED = "REPEALED"
+LAW_APPLIED = "APPLIED"
 LAW_UNADJUDICABLE = "UNADJUDICABLE"
 
 CERT_UNCERTIFIED = "UNCERTIFIED"
@@ -1725,6 +1726,19 @@ class AutonomousRepublic(gl.Contract):
                     self.rejected_law_count += 1
                     resolution_reason = "CODE_FULL"
                     self._enqueue_retirement("LAW", int(law.law_id), current_round)
+                elif law.law_kind == LAW_KIND_REPEAL:
+                    law.status = LAW_APPLIED
+                    self.enacted_law_count += 1
+                    law.effective_from_round = u256(current_round + 1)
+                    parent = self.laws[law.parent_law_id]
+                    parent.status = LAW_REPEALED
+                    parent.effective_until_round = u256(current_round)
+                    self.laws[parent.law_id] = parent
+                    self.active_law_count = u256(max(0, int(self.active_law_count) - 1))
+                    if parent.law_id in self.active_law_ids:
+                        del self.active_law_ids[parent.law_id]
+                    self._enqueue_retirement("LAW", int(law.law_id), current_round)
+                    self._enqueue_retirement("LAW", int(parent.law_id), current_round)
                 else:
                     law.status = LAW_ENACTED
                     self.enacted_law_count += 1
@@ -1743,17 +1757,8 @@ class AutonomousRepublic(gl.Contract):
                         if parent.law_id in self.active_law_ids:
                             del self.active_law_ids[parent.law_id]
                         self._enqueue_retirement("LAW", int(parent.law_id), current_round)
-                    elif law.law_kind == LAW_KIND_REPEAL:
-                        parent = self.laws[law.parent_law_id]
-                        parent.status = LAW_REPEALED
-                        parent.effective_until_round = u256(current_round)
-                        self.laws[parent.law_id] = parent
-                        self.active_law_count = u256(max(0, int(self.active_law_count) - 1))
-                        if parent.law_id in self.active_law_ids:
-                            del self.active_law_ids[parent.law_id]
-                        self._enqueue_retirement("LAW", int(parent.law_id), current_round)
                 sponsor = self.factions[law.sponsor_faction_id]
-                if law.status == LAW_ENACTED:
+                if law.status in (LAW_ENACTED, LAW_APPLIED):
                     sponsor.laws_enacted += 1
                     sponsor.season_points = u256(int(sponsor.season_points) + 2)
                     sponsor.legitimacy = u256(self._capped(int(sponsor.legitimacy) + 1))

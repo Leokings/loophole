@@ -14,6 +14,38 @@ from test_autonomous_republic import (
 )
 
 
+def _enact_certified_law(contract, direct_vm, law_id=1, title="Observable Rule"):
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS", "PROPOSE_CHARTER", title=title,
+               law_text="Every faction may publish a public delivery schedule for its district.",
+               rationale="Set a measurable public duty that can be checked against the recorded action."),
+        action("REFORMERS"), action("TRADITIONALISTS"),
+    ])
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="Every faction may publish a public delivery schedule")
+    assert contract.certify_law(law_id) == "ADJUDICABLE"
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS"), action("REFORMERS", stances=[{"law_id": law_id, "stance": "SUPPORT"}]),
+        action("TRADITIONALISTS"),
+    ])
+    advance_with_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
+    assert contract.get_law(law_id)["status"] == "ENACTED"
+
+
+def _repeal_law(contract, direct_vm, law_id):
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS"),
+        action("REFORMERS", "REPEAL_LAW", law_id=law_id,
+               rationale="Retire the obsolete public schedule rule using its recorded law ID."),
+        action("TRADITIONALISTS"),
+    ])
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS", stances=[{"law_id": contract.law_count, "stance": "SUPPORT"}]), action("REFORMERS"),
+        action("TRADITIONALISTS"),
+    ])
+    advance_with_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
+
+
 def test_menu_only_contains_legal_options_and_always_has_safe_actions(direct_vm, direct_deploy):
     contract = deploy_republic(direct_vm, direct_deploy)
     menu = contract._legal_options(
@@ -111,6 +143,60 @@ def test_repeal_needs_no_certification(direct_vm, direct_deploy):
     repeal = contract.get_law(2)
     assert repeal["law_kind"] == "REPEAL"
     assert repeal["certification"] == "NOT_REQUIRED"
+
+
+def test_repeal_frees_a_code_slot(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    _enact_certified_law(contract, direct_vm)
+    _repeal_law(contract, direct_vm, 1)
+    assert contract.active_law_count == 0
+    assert contract.get_law(1)["status"] == "REPEALED"
+    assert contract.get_law(2)["status"] == "APPLIED"
+    menu = contract._legal_options("MERCHANTS", contract._snapshot(), contract._law_view(),
+                                    contract._active_crisis_snapshot(), False)
+    assert not any(item["action_type"] in ("AMEND_LAW", "REPEAL_LAW", "VETO_LAW")
+                   and item["target_law_id"] == 2 for item in menu)
+
+    while contract.get_game()["round_number"] <= 30:
+        game = contract.get_game()
+        if game["season_status"] != "ACTIVE":
+            advance_time_to(direct_vm, game["objective_reveal_deadline"])
+            contract.finalize_season()
+        else:
+            advance_time_to(direct_vm, game["reveal_deadline"] + game["fallback_grace_seconds"])
+            contract.advance_round_fallback()
+    for law_id in (1, 2):
+        with direct_vm.expect_revert("LAW_PRUNED"):
+            contract.get_law(law_id)
+
+
+def test_repeal_reopens_a_full_code(direct_vm, direct_deploy):
+    contract = deploy_republic(direct_vm, direct_deploy)
+    _enact_certified_law(contract, direct_vm)
+    # Fill the remaining code slots without constructing 15 more voting histories.
+    contract.active_law_count = 16
+    _repeal_law(contract, direct_vm, 1)
+    assert contract.active_law_count == 15
+
+    # The next ordinary statute should use the slot released by the repeal.
+    round_number = contract.get_game()["round_number"]
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS", "PROPOSE_LAW", title="New Observable Rule",
+               law_text="A faction may use one action to build two influence in a round.",
+               rationale="Create a concrete rule that can be checked against the public action record."),
+        action("REFORMERS"), action("TRADITIONALISTS"),
+    ])
+    new_law_id = contract.get_game()["law_count"]
+    direct_vm.clear_mocks()
+    mock_law_certification(direct_vm, quote="build two influence in a round")
+    assert contract.certify_law(new_law_id) == "ADJUDICABLE"
+    advance_with_ai(contract, direct_vm, [
+        action("MERCHANTS"), action("REFORMERS", stances=[{"law_id": new_law_id, "stance": "SUPPORT"}]),
+        action("TRADITIONALISTS"),
+    ])
+    advance_with_ai(contract, direct_vm, [action("MERCHANTS"), action("REFORMERS"), action("TRADITIONALISTS")])
+    assert contract.get_law(new_law_id)["status"] == "ENACTED"
+    assert '"reason":"CODE_FULL"' not in contract.get_round_summary(round_number + 2)
 
 
 def test_later_stance_overwrites_earlier_and_abstain_clears(direct_vm, direct_deploy):
