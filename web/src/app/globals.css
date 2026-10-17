@@ -2340,8 +2340,13 @@ button:disabled {
 @media (max-width: 760px) {
   .topbar { min-height: 110px; padding: 0 16px 44px; }
   .brand small, .network-cluster .wallet-orb { display: none; }
-  .topbar nav { background: rgba(7, 17, 15, 0.96); border-bottom: 1px solid var(--line); bottom: 0; height: 44px; left: 0; position: absolute; top: auto; transform: none; width: 100%; z-index: 31; }
-  .topbar nav button, .topbar nav a { flex: 1; font-size: 9px; letter-spacing: 0.055em; min-width: 0; }
+  .topbar nav { background: rgba(7, 17, 15, 0.96); border-bottom: 1px solid var(--line); bottom: 0; height: 44px; left: 0; overflow-x: auto; position: absolute; scrollbar-width: none; top: auto; transform: none; width: 100%; z-index: 31; }
+  .topbar nav::-webkit-scrollbar { display: none; }
+  .topbar nav button, .topbar nav a { flex: 0 0 auto; font-size: 9px; letter-spacing: 0.055em; min-width: max-content; padding: 0 13px; }
+  .crisis-results article { align-items: start; grid-template-columns: minmax(0, 1fr); }
+  .crisis-results article > span { grid-column: 1; }
+  .crisis-results p { grid-column: 1; }
+  .crisis-footer { bottom: auto; justify-content: flex-start; left: auto; position: static; right: auto; }
   .wallet-button { padding: 8px 10px; }
   .system-strip { padding: 0 16px; }
   .system-strip span:nth-child(n+3) { display: none; }
