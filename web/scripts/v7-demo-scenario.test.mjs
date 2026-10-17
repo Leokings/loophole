@@ -15,13 +15,14 @@ function baseState() {
   return { steps: {}, nonces: {}, readbacks: {}, case_ids: {}, case_keys: {} };
 }
 
-function roundContext() {
+function roundContext(startRound = 1) {
   const state = baseState();
   const events = [];
   let phase = "COMMIT";
-  let round = 1;
+  let round = startRound;
   let commits = 0;
   let reveals = 0;
+  const revealedActions = [];
   const influences = Object.fromEntries(FACTIONS.map((faction) => [faction, 5]));
   const ctx = {
     state,
@@ -32,27 +33,35 @@ function roundContext() {
       if (method === "get_public_snapshot") return { factions: FACTIONS.map((faction) => ({ faction_id: faction, influence: influences[faction] })) };
       if (method === "get_game") return { phase, round_number: round, active_crisis_id: 0 };
       if (method === "preview_action_commitment") return "commitment";
+      if (method === "get_offices_json") return [{ holder_faction_id: "MERCHANTS" }];
+      if (method === "get_law") return { sponsor_faction_id: "TRADITIONALISTS" };
       if (method === "get_round_summary") return { actions: [] };
       if (method === "get_docket" || method === "get_registry_summary" || method === "get_storage_stats") return {};
       return {};
     },
     submitAccepted: async (step) => {
-      events.push({ type: "commit-or-reveal", method: step.method, id: step.id });
+      events.push({ type: "commit-or-reveal", method: step.method, id: step.id, args: step.args });
       if (step.method === "commit_action") commits += 1;
-      if (step.method === "reveal_action") reveals += 1;
+      if (step.method === "reveal_action") {
+        reveals += 1;
+        revealedActions.push({ faction: step.args[0], actionType: step.args[1] });
+      }
       if (commits === 4) phase = "REVEAL";
       if (reveals === 4) phase = "READY_TO_ADVANCE";
       if (step.method === "advance_round") {
-        for (const faction of FACTIONS) influences[faction] = Math.min(20, influences[faction] + 2);
-        round = 2; phase = "COMMIT";
+        for (const { faction, actionType } of revealedActions) {
+          const delta = { BUILD_INFLUENCE: 2, PROPOSE_LAW: -2, AMEND_LAW: -3, UNDERMINE: -1, RUN_FOR_OFFICE: -1 }[actionType] || 0;
+          influences[faction] = Math.max(0, Math.min(20, influences[faction] + delta));
+        }
+        revealedActions.length = 0;
+        round += 1; phase = "COMMIT";
       }
       return { ...step, tx_hash: `0x${step.id}`, status: "ACCEPTED_PENDING_FINALITY" };
     },
     executeStep: async (step) => {
       events.push({ type: "execute", method: step.method, id: step.id });
       if (step.method === "advance_round") {
-        for (const faction of FACTIONS) influences[faction] = Math.min(20, influences[faction] + 2);
-        round = 2; phase = "COMMIT";
+        round += 1; phase = "COMMIT";
       }
       return { ...step, tx_hash: `0x${step.id}`, status: "FINALIZED_SUCCESS" };
     },
@@ -102,6 +111,15 @@ describe("V7 code-defined live demo scenario", () => {
     const { actionArgs } = await import("./v7-demo-scenario.mjs");
     const args = actionArgs({ faction: "MERCHANTS", action_type: "UNDERMINE", target_faction_id: "REVOLUTIONARIES", class_law_id: 2, rationale: "Test a non-officeholder target safely.", stances: [] }, "nonce");
     expect(args[3]).toBe(0);
+  });
+
+  it("plays the Reformer crisis response in round five when a crisis is open", async () => {
+    const { ctx, events } = roundContext(5);
+    ctx.state.crisis_opened = 1;
+    ctx.state.law_ids = { vague: 2, rule: 1 };
+    await stages.find((stage) => stage.id === "r5").run(ctx);
+    const reveal = events.find((event) => event.type === "commit-or-reveal" && event.method === "reveal_action" && event.args?.[0] === "REFORMERS");
+    expect(reveal?.args?.[1]).toBe("RESPOND_CRISIS");
   });
 
   it("stops on the injection case returning an unexpected label", async () => {

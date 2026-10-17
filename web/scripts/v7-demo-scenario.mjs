@@ -522,17 +522,24 @@ async function round4(ctx) {
 
 async function round5(ctx) {
   const ids = lawIds(ctx);
+  const response = stateFor(ctx).crisis_opened
+    ? commonAction("REFORMERS", ACTIONS.RESPOND, "Reopen the two northern grain routes with Reformer escorts and publish a ration ledger each round.")
+    : commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before filing a court case.");
   await play(ctx, 5, [
     commonAction("MERCHANTS", ACTIONS.UNDERMINE, "Test the protected-office rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", class_law_id: ids.rule, expected_target_class: "OTHER_FACTION" }),
-    commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before filing a court case."),
+    response,
     commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Challenge the sitting Executive and test the officeholder class.", { target_faction_id: "MERCHANTS", class_law_id: ids.rule, expected_target_class: "OFFICEHOLDER" }),
     commonAction("REVOLUTIONARIES", ACTIONS.GROW, "Grow wealth while observing the first court precedent."),
   ], { stageId: "r5" });
 }
 
-async function judgeCrisis(ctx) {
+export async function judgeCrisis(ctx) {
   const crisisId = Number(stateFor(ctx).crisis_opened || 0);
   if (!crisisId) return;
+  const pending = parseJson(await read(ctx, "republic", "get_crisis", [crisisId], "A"), "get_crisis");
+  const reformerResponse = parseJson(pending?.responses_json, "crisis responses")
+    ?.find((entry) => entry.faction_id === "REFORMERS");
+  if (!reformerResponse?.response) return;
   await finalizedStep(ctx, step("crisis:judge", "Judge the Reformer crisis response", "A", "republic", "judge_crisis_response", [crisisId, "REFORMERS"]));
   const judged = parseJson(await read(ctx, "republic", "get_crisis", [crisisId], "A"), "get_crisis");
   const response = parseJson(judged.responses_json, "crisis responses").find((entry) => entry.faction_id === "REFORMERS");
@@ -737,7 +744,7 @@ export function buildExportActionLists() {
     ],
     5: [
       commonAction("MERCHANTS", ACTIONS.UNDERMINE, "Test the protected-office rule against a non-officeholder.", { target_faction_id: "REVOLUTIONARIES", class_law_id: rule }),
-      commonAction("REFORMERS", ACTIONS.BUILD, "Build influence before filing a court case."),
+      commonAction("REFORMERS", ACTIONS.RESPOND, "Reopen the two northern grain routes with Reformer escorts and publish a ration ledger each round."),
       commonAction("TRADITIONALISTS", ACTIONS.UNDERMINE, "Challenge the sitting Executive and test the officeholder class.", { target_faction_id: "MERCHANTS", class_law_id: rule }),
       commonAction("REVOLUTIONARIES", ACTIONS.GROW, "Grow wealth while observing the first court precedent."),
     ],
