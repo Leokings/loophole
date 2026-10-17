@@ -404,7 +404,9 @@ def test_court_retains_bounded_terminal_cases(direct_vm, direct_deploy, direct_a
 
     def hook(vm, request):
         if "CallContract" in request and request["CallContract"].get("calldata", {}).get("method") == "get_holding":
-            return bytes([0]) + calldata.encode({})
+            key = request["CallContract"].get("calldata", {}).get("args", [""])[0]
+            holding = {"key": key} if key == "law-1|UNDERMINE|OFFICEHOLDER" else {}
+            return bytes([0]) + calldata.encode(holding)
         return republic_hook(vm, request)
 
     direct_vm._gl_call_hook = hook
@@ -441,3 +443,45 @@ def test_court_retains_bounded_terminal_cases(direct_vm, direct_deploy, direct_a
     assert "CASE-001" not in court.case_by_reference
     assert not any(int(value) == 1 for value in court.case_by_claim.values())
     assert "law-1|UNDERMINE|OFFICEHOLDER" not in court.deciding_case_by_key
+
+
+def test_pruning_pending_decider_keeps_stayed_case_behind_finality_delay(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    republic, caselaw = _addresses(direct_alice, direct_bob)
+    court = deploy_court(direct_vm, direct_deploy, republic, caselaw)
+    latest = install_republic_hook(direct_vm, direct_alice, direct_bob)
+    _ready_case(court, direct_vm, direct_alice, latest=latest)
+    decided_at = int(datetime.datetime.fromisoformat(TEST_TIME.replace("Z", "+00:00")).timestamp())
+    decider = court.cases[1]
+    decider.status = "DECIDED"
+    decider.label = "COVERED_BREACH"
+    decider.verdict = "VIOLATION"
+    decider.decided_at = type(decider.decided_at)(decided_at)
+    court._mark_terminal(decider)
+
+    _ready_case(court, direct_vm, direct_alice, reference="CASE-WAITING", action_round=2, latest=latest)
+    assert court.get_case(2)["status"] == "STAYED"
+    template = court.cases[1]
+    u = type(court.case_count)
+    for case_id in range(3, 67):
+        fake = replace(
+            template, case_id=u(case_id), case_reference=f"CASE-PRUNE-{case_id}",
+            action_round=type(template.action_round)(case_id + 1), key=f"other-{case_id}|UNDERMINE|OFFICEHOLDER",
+            status="DECIDED", label="COVERED_BREACH", verdict="VIOLATION",
+            decided_at=type(template.decided_at)(decided_at),
+        )
+        court.case_count = u(case_id)
+        court._mark_terminal(fake)
+
+    assert 1 not in court.cases
+    assert court.deciding_case_by_key[decider.key] == 1
+    assert int(court.pruned_decider_at[decider.key]) == decided_at
+    direct_vm.warp(as_iso(decided_at + 1799))
+    assert court.get_keeper_status()["ops"] == []
+    with direct_vm.expect_revert("CASE_STILL_STAYED"):
+        court.resolve_stayed_case(2)
+
+    direct_vm.warp(as_iso(decided_at + 1800))
+    assert {tuple(op["args"]) for op in court.get_keeper_status()["ops"] if op["method"] == "resolve_stayed_case"} == {(2,)}
+    assert court.resolve_stayed_case(2) == "BRIEFING"

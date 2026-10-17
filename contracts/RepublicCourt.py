@@ -275,6 +275,7 @@ class RepublicCourt(gl.Contract):
     terminal_head: u256
     terminal_tail: u256
     terminal_count: u256
+    pruned_decider_at: TreeMap[str, u256]
 
     def __init__(self, republic_address: Address, caselaw_address: Address, brief_seconds: int, resolution_seconds: int):
         _no_value()
@@ -452,7 +453,18 @@ class RepublicCourt(gl.Contract):
                 if claim_key in self.case_by_claim and int(self.case_by_claim[claim_key]) == oldest_id:
                     del self.case_by_claim[claim_key]
                 if oldest.key in self.deciding_case_by_key and int(self.deciding_case_by_key[oldest.key]) == oldest_id:
-                    del self.deciding_case_by_key[oldest.key]
+                    holding_missing = False
+                    if oldest.status == STATUS_DECIDED and oldest.label != LABEL_UNCLEAR:
+                        try:
+                            holding_missing = not self._holding_for_key(oldest.key)
+                        except Exception:
+                            holding_missing = True
+                    if holding_missing:
+                        self.pruned_decider_at[oldest.key] = oldest.decided_at
+                    else:
+                        del self.deciding_case_by_key[oldest.key]
+                        if oldest.key in self.pruned_decider_at:
+                            del self.pruned_decider_at[oldest.key]
                 del self.cases[oldest_id]
             self.terminal_head = u256((int(self.terminal_head) + 1) % MAX_RETAINED_TERMINAL_CASES)
             self.terminal_count -= 1
@@ -685,12 +697,19 @@ class RepublicCourt(gl.Contract):
             _expected("CASE_NOT_STAYED")
         holding = self._holding_for_key(case.key)
         if holding:
+            if (case.key in self.pruned_decider_at and case.key in self.deciding_case_by_key
+                    and int(self.deciding_case_by_key[case.key]) not in self.cases):
+                del self.deciding_case_by_key[case.key]
+                del self.pruned_decider_at[case.key]
             return self._decide_summary(case, holding).label
         can_take_over = case.key not in self.deciding_case_by_key
         if not can_take_over:
             deciding_id = int(self.deciding_case_by_key[case.key])
             if deciding_id not in self.cases:
-                can_take_over = True
+                if case.key in self.pruned_decider_at:
+                    can_take_over = _now_epoch() >= int(self.pruned_decider_at[case.key]) + RECOVERY_DELAY_SECONDS
+                else:
+                    can_take_over = True
             else:
                 deciding = self.cases[deciding_id]
                 can_take_over = deciding.status in _TERMINAL_STATUSES and deciding.label == LABEL_UNCLEAR
@@ -699,6 +718,8 @@ class RepublicCourt(gl.Contract):
         case.status = STATUS_BRIEFING
         case.brief_deadline = u256(_now_epoch() + int(self.brief_seconds))
         self.deciding_case_by_key[case.key] = case.case_id
+        if case.key in self.pruned_decider_at:
+            del self.pruned_decider_at[case.key]
         self.stayed_case_count = u256(max(0, int(self.stayed_case_count) - 1))
         self.cases[case.case_id] = case
         return case.status
@@ -740,7 +761,11 @@ class RepublicCourt(gl.Contract):
                     stayed_ops.append({"method": "resolve_stayed_case", "args": [case_id]})
                 else:
                     deciding_id = int(self.deciding_case_by_key[case.key])
-                    if deciding_id not in self.cases or self.cases[deciding_id].status in _TERMINAL_STATUSES:
+                    if deciding_id not in self.cases:
+                        if (case.key not in self.pruned_decider_at
+                                or now >= int(self.pruned_decider_at[case.key]) + RECOVERY_DELAY_SECONDS):
+                            stayed_ops.append({"method": "resolve_stayed_case", "args": [case_id]})
+                    elif self.cases[deciding_id].status in _TERMINAL_STATUSES:
                         if deciding_id in self.cases and self.cases[deciding_id].label == LABEL_UNCLEAR:
                             stayed_ops.append({"method": "resolve_stayed_case", "args": [case_id]})
         recent_count = min(int(self.terminal_count), 16)
