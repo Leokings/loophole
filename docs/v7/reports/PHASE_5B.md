@@ -122,3 +122,15 @@ independently re-polled during this implementation.
 | Technical readiness | PASS for local implementation; launch prerequisite pending | Required checks pass, including mocked recovery and local Git checkpoint tests. The workflow needs default-branch registration and owner-supplied secrets before its first GitHub run. |
 | Distinctiveness | Not re-evaluated by this operations handoff | Contracts and the reviewed V7 mechanism are unchanged. Final cohort/project comparison remains Claude's Phase 5B review. |
 | Evidence readiness | FAIL for a completed V7 release | Two explicitly abandoned historical worlds; no newly executed GitHub demo or verified final public V7 proof from this handoff. |
+
+## Workflow registration — 2026-10-18
+
+After the owner approved the default-branch prerequisite, commit `9b240ea`
+added **only** `.github/workflows/live-release.yml` to `main`. Its Git blob
+matches the tested workflow on `v7`. The YAML/trigger check and the targeted
+workflow test passed. GitHub's API confirms `live-release` is active and has
+**zero runs** after registration. The V7 application was not merged to `main`.
+
+This closes the workflow-registration prerequisite recorded above. Repository
+secrets, the first owner-started `check`/`deploy`, and live evidence remain
+pending; the local-testing and evidence boundaries in this report still apply.

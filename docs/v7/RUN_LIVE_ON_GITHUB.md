@@ -11,11 +11,13 @@ workflow to exist on the repository's default branch (`main`) before the Run
 workflow button or CLI dispatch can work. **Pushing only `v7` does not register
 this new workflow.**
 
-The owner must approve copying **only**
-`.github/workflows/live-release.yml` to `main` first. This does not merge the V7
-contracts or publish the frontend: the workflow explicitly checks out `v7`.
-The handoff authorizes a `v7` push only, so that default-branch change has not
-been made as part of this implementation.
+**Registered on 2026-10-18 with owner approval:** commit `9b240ea` added only
+`.github/workflows/live-release.yml` to `main`. GitHub now lists `live-release`
+as active. The workflow explicitly checks out `v7`; the V7 application has not
+been merged to `main`. No live-release job was started during registration.
+
+Continue with the two secrets below, then select **v7** when running the
+workflow's `check` and `deploy` modes.
 
 [GitHub's manual workflow instructions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
 document this prerequisite.
