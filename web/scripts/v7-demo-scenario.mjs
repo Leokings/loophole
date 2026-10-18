@@ -7,6 +7,8 @@
  * documented by `runScenario` below.
  */
 import { randomBytes } from "node:crypto";
+import { SafePauseError, ScenarioStopError, TransientRunError, exitCodeFor } from "./v7-runner-runtime.mjs";
+export { ScenarioStopError } from "./v7-runner-runtime.mjs";
 
 export const FACTIONS = Object.freeze([
   "MERCHANTS",
@@ -34,13 +36,6 @@ const EFFECTS_POLL_MS = 60_000;
 const EFFECTS_MAX_MS = 45 * 60_000;
 const EFFECTS_RECOVERY_AFTER_MS = 30 * 60_000;
 
-export class ScenarioStopError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "ScenarioStopError";
-  }
-}
-
 function parseJson(value, label) {
   if (typeof value === "string") {
     try { return JSON.parse(value); } catch (error) { throw new Error(`${label} returned invalid JSON: ${error.message}`); }
@@ -48,9 +43,14 @@ function parseJson(value, label) {
   return value;
 }
 
-function read(ctx, contract, method, args = [], wallet = "A") {
+async function read(ctx, contract, method, args = [], wallet = "A") {
   if (typeof ctx.read !== "function") throw new Error("Scenario context is missing read().");
-  return ctx.read({ contract, method, args, wallet });
+  const result = await ctx.read({ contract, method, args, wallet });
+  if (contract === "republic" && method === "get_game") {
+    const game = parseJson(result, method);
+    ctx.state.current_game = { round_number: Number(game.round_number), phase: game.phase };
+  }
+  return result;
 }
 
 async function save(ctx) {
@@ -65,6 +65,7 @@ function stateFor(ctx) {
   ctx.state.case_keys ??= {};
   ctx.state.readbacks ??= {};
   ctx.state.completed_stages ??= [];
+  ctx.state.round_progress ??= {};
   return ctx.state;
 }
 
@@ -174,15 +175,31 @@ function nonceFor(ctx, round, faction) {
   return randomBytes(16).toString("hex");
 }
 
-async function acceptedStep(ctx, step) {
-  if (typeof ctx.submitAccepted === "function") return ctx.submitAccepted(step);
-  if (typeof ctx.executeStep === "function") return ctx.executeStep(step, { acceptedOnly: true });
-  throw new Error("Scenario context is missing submitAccepted().");
+function recordedSuccess(record) {
+  return Boolean(record?.tx_hash) && ["ACCEPTED_PENDING_FINALITY", "FINALIZED_SUCCESS"].includes(record.status);
+}
+
+async function acceptedStep(ctx, descriptor) {
+  if (recordedSuccess(stateFor(ctx).steps[descriptor.id])) return ctx.state.steps[descriptor.id];
+  let record;
+  if (typeof ctx.submitAccepted === "function") record = await ctx.submitAccepted(descriptor);
+  else if (typeof ctx.executeStep === "function") record = await ctx.executeStep(descriptor, { acceptedOnly: true });
+  else throw new Error("Scenario context is missing submitAccepted().");
+  ctx.state.steps[descriptor.id] = record;
+  await save(ctx);
+  return record;
 }
 
 async function acceptedBatch(ctx, steps) {
-  if (typeof ctx.submitAcceptedBatch === "function") return ctx.submitAcceptedBatch(steps);
-  return Promise.all(steps.map((item) => acceptedStep(ctx, item)));
+  const pending = steps.filter((item) => !recordedSuccess(stateFor(ctx).steps[item.id]));
+  if (!pending.length) return [];
+  if (typeof ctx.submitAcceptedBatch === "function") {
+    const records = await ctx.submitAcceptedBatch(pending);
+    for (const record of records) ctx.state.steps[record.id] = record;
+    await save(ctx);
+    return records;
+  }
+  return Promise.all(pending.map((item) => acceptedStep(ctx, item)));
 }
 
 async function finalizedStep(ctx, step) {
@@ -219,57 +236,118 @@ function step(id, title, wallet, contract, method, args, extra = {}) {
  */
 export async function play(ctx, round, actions, options = {}) {
   const state = stateFor(ctx);
+  const progress = state.round_progress[round] ??= {};
+  actions = progress.actions ??= structuredClone(actions);
   if (!Array.isArray(actions) || actions.length !== FACTIONS.length) throw new Error(`Round ${round} needs exactly four faction actions.`);
   const byFaction = new Map(actions.map((action) => [action.faction, action]));
   if (byFaction.size !== FACTIONS.length || FACTIONS.some((faction) => !byFaction.has(faction))) throw new Error(`Round ${round} must contain one action for every faction.`);
 
-  const before = await currentInfluence(ctx);
-  const actualBefore = expectedInfluence(ctx, before);
-  assertInfluence(actualBefore, state.expected_influence, `round ${round} before commit`);
-  await waitForPhase(ctx, "COMMIT");
+  const prefix = options.stageId || `r${round}`;
+  const idFor = (kind, faction) => `${prefix}:${kind}:${faction}`;
+  const missed = () => { throw new ScenarioStopError(`Round ${round} window missed; scripted story cannot continue — redeploy`); };
+  const allRecorded = (kind) => FACTIONS.every((faction) => Boolean(state.steps[idFor(kind, faction)]?.tx_hash));
+  let game = parseJson(await read(ctx, "republic", "get_game"), "get_game");
+  const advanced = Number(game.round_number) === Number(round) + 1;
+  if (Number(game.round_number) !== Number(round) && !advanced) missed();
+  if (advanced && (!allRecorded("reveal") || !state.steps[`${prefix}:advance`]?.tx_hash)) missed();
+  if (!advanced) {
+    const before = await currentInfluence(ctx);
+    const actualBefore = expectedInfluence(ctx, before);
+    assertInfluence(actualBefore, state.expected_influence, `round ${round} before commit`);
+    progress.expected_before ??= { ...state.expected_influence };
+    if (!["COMMIT", "REVEAL", "READY_TO_ADVANCE"].includes(game.phase)) missed();
+    if (game.phase !== "COMMIT" && !allRecorded("commit")) missed();
+    if (game.phase === "READY_TO_ADVANCE" && !allRecorded("reveal")) missed();
 
-  const nonces = {};
-  const previews = [];
-  for (const faction of FACTIONS) {
-    const action = byFaction.get(faction);
-    if (action.action_type === ACTIONS.UNDERMINE && action.expected_target_class) {
-      await assertTargetClass(ctx, action, action.expected_target_class);
+    for (const faction of FACTIONS) {
+      const key = `${round}:${faction}`;
+      if (!state.nonces[key]) {
+        if (state.steps[idFor("commit", faction)]?.tx_hash) throw new ScenarioStopError(`Round ${round} has a recorded commitment but its saved nonce is missing.`);
+        state.nonces[key] = nonceFor(ctx, round, faction);
+      }
     }
-    const nonceKey = `${round}:${faction}`;
-    const nonce = state.nonces[nonceKey] || nonceFor(ctx, round, faction);
-    nonces[faction] = nonce;
-    if (!state.nonces[nonceKey]) {
-      state.nonces[nonceKey] = nonce;
+    await save(ctx);
+    const commitSteps = [];
+    for (const faction of FACTIONS) {
+      const existing = state.steps[idFor("commit", faction)];
+      if (existing?.tx_hash) commitSteps.push(existing);
+      else {
+        const action = byFaction.get(faction);
+        if (action.action_type === ACTIONS.UNDERMINE && action.expected_target_class) await assertTargetClass(ctx, action, action.expected_target_class);
+        commitSteps.push(step(idFor("commit", faction), `Round ${round}: commit ${faction}`, factionSeat(faction), "republic", "commit_action", [], { round, phase: "COMMIT" }));
+      }
+    }
+    await Promise.all(commitSteps.filter((item) => !item.tx_hash).map(async (item) => {
+      const faction = item.args[0] || FACTIONS.find((value) => idFor("commit", value) === item.id);
+      item.args = [faction, String(await read(ctx, "republic", "preview_action_commitment", actionArgs(byFaction.get(faction), state.nonces[`${round}:${faction}`]), item.wallet))];
+    }));
+    // A job may have stopped after saving a hash but before acceptance. Poll the
+    // same hash even in a later phase; never submit a replacement move there.
+    if (commitSteps.some((item) => !item.tx_hash)) {
+      const latest = parseJson(await read(ctx, "republic", "get_game"), "get_game");
+      if (Number(latest.round_number) !== Number(round) || latest.phase !== "COMMIT") missed();
+    }
+    if (game.phase === "COMMIT" || commitSteps.some((item) => !recordedSuccess(item))) await acceptedBatch(ctx, commitSteps);
+    if (!FACTIONS.every((faction) => recordedSuccess(state.steps[idFor("commit", faction)]))) missed();
+
+    if (game.phase === "COMMIT") game = await waitForRoundPhase(ctx, round, "REVEAL", missed);
+    if (game.phase === "READY_TO_ADVANCE" && !allRecorded("reveal")) missed();
+    const reveals = FACTIONS.map((faction) => state.steps[idFor("reveal", faction)] || step(idFor("reveal", faction), `Round ${round}: reveal ${faction}`, factionSeat(faction), "republic", "reveal_action", actionArgs(byFaction.get(faction), state.nonces[`${round}:${faction}`]), { round, phase: "REVEAL" }));
+    if (reveals.some((item) => !item.tx_hash)) {
+      const latest = parseJson(await read(ctx, "republic", "get_game"), "get_game");
+      if (Number(latest.round_number) !== Number(round) || latest.phase !== "REVEAL") missed();
+    }
+    await acceptedBatch(ctx, reveals);
+    if (!reveals.every((item) => recordedSuccess(state.steps[item.id]))) missed();
+    if (game.phase !== "READY_TO_ADVANCE") await waitForRoundPhase(ctx, round, "READY_TO_ADVANCE", missed);
+    if (!progress.before_advance_done) {
+      if (typeof options.beforeAdvance === "function") await options.beforeAdvance(ctx, round);
+      progress.before_advance_done = true;
       await save(ctx);
     }
-    previews.push({ faction, action, nonce, wallet: factionSeat(faction) });
+    // Reserve enough of the next job for the following commit/reveal window
+    // and its attached court stages. Round 6 carries the three longest cases.
+    const reserveMinutes = round === 5 ? 210 : round === 6 ? 90 : 40;
+    await pauseAtSafePoint(ctx, `round ${round} READY_TO_ADVANCE`, reserveMinutes * 60_000);
   }
-
-  const commitments = await Promise.all(previews.map(async ({ faction, action, nonce, wallet }) => ({
-    faction, wallet,
-    commitment: String(await read(ctx, "republic", "preview_action_commitment", actionArgs(action, nonce), wallet)),
-  })));
-  await acceptedBatch(ctx, commitments.map(({ faction, wallet, commitment }) => step(
-    `${options.stageId || `r${round}`}:commit:${faction}`, `Round ${round}: commit ${faction}`, wallet,
-    "republic", "commit_action", [faction, commitment], { round, phase: "COMMIT" },
-  )));
-
-  await waitForPhase(ctx, "REVEAL");
-  await acceptedBatch(ctx, FACTIONS.map((faction) => {
-    const action = byFaction.get(faction);
-    return step(`${options.stageId || `r${round}`}:reveal:${faction}`, `Round ${round}: reveal ${faction}`, factionSeat(faction), "republic", "reveal_action", actionArgs(action, nonces[faction]), { round, phase: "REVEAL" });
-  }));
-
-  await waitForPhase(ctx, "READY_TO_ADVANCE");
-  if (typeof options.beforeAdvance === "function") await options.beforeAdvance(ctx, round);
-  await acceptedStep(ctx, step(`${options.stageId || `r${round}`}:advance`, `Round ${round}: advance`, "A", "republic", "advance_round", [], { round }));
+  if (!progress.expected_after) {
+    progress.expected_before ??= { ...state.expected_influence };
+    state.expected_influence = { ...progress.expected_before };
+    advanceExpectedInfluence(ctx, actions);
+    progress.expected_after = { ...state.expected_influence };
+    state.expected_influence = { ...progress.expected_before };
+    await save(ctx);
+  }
+  // There is deliberately no pause from this advance until the next READY.
+  await acceptedStep(ctx, step(`${prefix}:advance`, `Round ${round}: advance`, "A", "republic", "advance_round", [], { round }));
   await waitForRound(ctx, Number(round) + 1);
-  advanceExpectedInfluence(ctx, actions);
+  state.expected_influence = { ...progress.expected_after };
   const after = await currentInfluence(ctx);
   assertInfluence(factionSnapshot(after), state.expected_influence, `round ${round} after settlement`);
   if (typeof options.afterAdvance === "function") await options.afterAdvance(ctx, round);
   await recordReadbacks(ctx, options.stageId || `r${round}`, round);
+  progress.settled = true;
+  await save(ctx);
   return { round, actions };
+}
+
+async function waitForRoundPhase(ctx, round, target, missed) {
+  const deadline = now(ctx) + 6 * 60 * 60_000;
+  while (now(ctx) <= deadline) {
+    const game = parseJson(await read(ctx, "republic", "get_game"), "get_game");
+    if (Number(game.round_number) !== Number(round)) missed();
+    if (game.phase === target) return game;
+    if (target === "REVEAL" && game.phase !== "COMMIT") missed();
+    await sleep(ctx, POLL_PHASE_MS);
+  }
+  throw new Error(`Timed out waiting for round ${round} phase ${target}.`);
+}
+
+async function pauseAtSafePoint(ctx, location, reserveMs = 0) {
+  if (!ctx.runtime || (!ctx.runtime.exceeded() && (ctx.runtime.remainingMs?.() ?? Infinity) >= reserveMs)) return;
+  stateFor(ctx).paused = { location, at: new Date(now(ctx)).toISOString() };
+  await save(ctx);
+  throw new SafePauseError(`PAUSED_SAFE: ${location}`);
 }
 
 function factionSeat(faction) {
@@ -300,7 +378,7 @@ async function recordReadbacks(ctx, stageId, round) {
   const state = stateFor(ctx);
   const readback = {};
   try { readback.game = await read(ctx, "republic", "get_game", [], "A"); }
-  catch (error) { readback.game = { unavailable: error.message }; }
+  catch (error) { if (exitCodeFor(error) === 3) throw error; readback.game = { unavailable: error.message }; }
   const calls = [
     ["summary", "republic", "get_round_summary", [Number(round)]],
     ["docket", "court", "get_docket", [20]],
@@ -323,7 +401,7 @@ async function recordReadbacks(ctx, stageId, round) {
   }
   if (Number(gameValue(readback.game, "active_crisis_id") || 0) > 0) calls.push(["crisis", "republic", "get_crisis", [Number(gameValue(readback.game, "active_crisis_id"))]]);
   for (const [id, contract, method, args] of calls) {
-    try { readback[id] = await read(ctx, contract, method, args, "A"); } catch (error) { readback[id] = { unavailable: error.message }; }
+    try { readback[id] = await read(ctx, contract, method, args, "A"); } catch (error) { if (exitCodeFor(error) === 3) throw error; readback[id] = { unavailable: error.message }; }
   }
   state.readbacks[stageId] = readback;
   await save(ctx);
@@ -351,8 +429,8 @@ export async function file(ctx, plaintiffSeat, defendant, actionRound, lawId, cl
     case_name: caseName, case_link_role: "filing", expected_failure: Boolean(options.expected_failure), expected_error_code: options.expected_error_code || null,
   }));
   if (options.expected_failure) return record;
-  const court = parseJson(await read(ctx, "court", "get_court", [], seat), "get_court");
-  const caseId = Number(court.case_count);
+  const court = state.case_ids[caseName] ? null : parseJson(await read(ctx, "court", "get_court", [], seat), "get_court");
+  const caseId = Number(state.case_ids[caseName] || court.case_count);
   if (!Number.isInteger(caseId) || caseId < 1) throw new Error(`Case ${caseName} did not expose a valid case id.`);
   state.case_ids[caseName] = caseId;
   const caseRecord = parseJson(await read(ctx, "court", "get_case", [caseId], seat), "get_case");
@@ -501,6 +579,7 @@ async function openCrisis(ctx) {
     stateFor(ctx).crisis_opened = Number(game.active_crisis_id || 0);
     await save(ctx);
   } catch (error) {
+    if (error instanceof SafePauseError || error instanceof TransientRunError || exitCodeFor(error) === 3) throw error;
     stateFor(ctx).crisis_opened = 0;
     stateFor(ctx).optional_failures ??= {};
     stateFor(ctx).optional_failures.crisis_open = error.message;
@@ -510,11 +589,9 @@ async function openCrisis(ctx) {
 }
 
 async function round4(ctx) {
-  const response = stateFor(ctx).crisis_opened
-    ? commonAction("REFORMERS", ACTIONS.RESPOND, "Reopen the two northern grain routes with Reformer escorts and publish a ration ledger each round.")
-    : commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while the crisis slot is unavailable.");
   await play(ctx, 4, [
-    commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence during the crisis round."), response,
+    commonAction("MERCHANTS", ACTIONS.BUILD, "Build influence during the crisis round."),
+    commonAction("REFORMERS", ACTIONS.BUILD, "Build influence while the crisis is opened at round end."),
     commonAction("TRADITIONALISTS", ACTIONS.BUILD, "Build influence during the crisis round."),
     commonAction("REVOLUTIONARIES", ACTIONS.BUILD, "Build influence during the crisis round."),
   ], { stageId: "r4", beforeAdvance: openCrisis });
@@ -725,15 +802,26 @@ async function casesR9(ctx) {
 }
 
 async function fallbackLast(ctx) {
-  await waitForPhase(ctx, "COMMIT");
-  await casesR9(ctx);
-  for (const [seat, faction] of Object.entries(SEATS)) {
-    await finalizedStep(ctx, step(`r10:release:${faction}`, `Release ${faction}`, seat, "republic", "release_faction", [faction], { round: 10 }));
-  }
+  const state = stateFor(ctx);
   const game = parseJson(await read(ctx, "republic", "get_game", [], "A"), "get_game");
-  const waitUntil = Math.max(Number(game.reveal_deadline || 0) * 1000 + 10_800_000, now(ctx));
-  if (typeof ctx.waitUntil === "function") await ctx.waitUntil(waitUntil);
-  else await sleep(ctx, Math.max(0, waitUntil - now(ctx)));
+  if (Number(game.round_number) !== 10 && !(Number(game.round_number) === 11 && state.steps["r10:fallback"]?.tx_hash)) {
+    throw new ScenarioStopError("Round 10 fallback is no longer reachable; scripted story cannot continue — redeploy");
+  }
+  if (!state.fallback_prepared) {
+    await casesR9(ctx);
+    for (const [seat, faction] of Object.entries(SEATS)) {
+      await finalizedStep(ctx, step(`r10:release:${faction}`, `Release ${faction}`, seat, "republic", "release_faction", [faction], { round: 10 }));
+    }
+    state.fallback_prepared = true;
+    state.fallback_wait_until = Number(game.reveal_deadline) * 1000 + 10_800_000;
+    await save(ctx);
+  }
+  while (now(ctx) < state.fallback_wait_until) {
+    await pauseAtSafePoint(ctx, "round 10 fallback wait");
+    const interval = Math.min(60_000, state.fallback_wait_until - now(ctx), ctx.runtime?.remainingMs() ?? Infinity);
+    await sleep(ctx, interval);
+  }
+  await pauseAtSafePoint(ctx, "round 10 fallback ready");
   const record = await finalizedStep(ctx, step("r10:fallback", "Advance the final round with fallback", "A", "republic", "advance_round_fallback", [], { round: 10 }));
   const summary = parseJson(await read(ctx, "republic", "get_round_summary", [10], "A"), "get_round_summary");
   const actions = summary?.actions || [];
@@ -839,16 +927,28 @@ export const revision2StagePlan = Object.freeze([
 
 export async function runScenario(ctx, orderedStages = stages) {
   const state = stateFor(ctx);
+  if (state.stopped?.exit_code === 2 || state.stopped?.exit_code === 1) throw new ScenarioStopError("This run previously stopped on an unexpected result; owner review is required before another attempt.");
+  delete state.paused;
+  delete state.stopped;
   state.stage_order ??= orderedStages.map((stage) => stage.id);
   for (const stage of orderedStages) {
     if (state.completed_stages.includes(stage.id)) continue;
     try {
+      if (ctx.runtime?.exceeded()) {
+        const game = parseJson(await read(ctx, "republic", "get_game"), "get_game");
+        // An advance has opened the next commit window. Finish that round's
+        // scripted moves before allowing a pause, even if the budget expired.
+        const revealed = FACTIONS.every((faction) => recordedSuccess(state.steps[`r${Number(game.round_number)}:reveal:${faction}`]));
+        if (game.phase === "READY_TO_ADVANCE" && (revealed || state.fallback_prepared)) {
+          await pauseAtSafePoint(ctx, `between stages before ${stage.id}`);
+        }
+      }
       await stage.run(ctx);
       state.completed_stages.push(stage.id);
       state.last_stage = stage.id;
       await save(ctx);
     } catch (error) {
-      state.stopped = { stage: stage.id, message: error.message };
+      if (!(error instanceof SafePauseError)) state.stopped = { stage: stage.id, message: error.message, exit_code: exitCodeFor(error) };
       await save(ctx);
       throw error;
     }

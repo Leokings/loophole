@@ -5,7 +5,7 @@
  * `v7-demo-scenario.mjs`; this file owns RPC clients, durable transaction
  * recording, and the explicit StudioNet safety gate.
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -14,6 +14,8 @@ import { TransactionStatus, transactionResultNumberToName } from "genlayer-js/ty
 import { assertTimingWindows, releaseTimings } from "./v7-release-guards.mjs";
 import { clientFor, endpointFor, requireStage } from "./deployment-shared.mjs";
 import { runScenario } from "./v7-demo-scenario.mjs";
+import { ScenarioStopError, exitCodeFor, installRpcRetries, runtimeLimit, save } from "./v7-runner-runtime.mjs";
+export { save, exitCodeFor } from "./v7-runner-runtime.mjs";
 
 const root = resolve(process.cwd(), "..");
 const evidenceDir = resolve(root, ".live-evidence");
@@ -21,26 +23,30 @@ const walletPath = resolve(evidenceDir, "v7-demo-wallets.json");
 const statePath = resolve(root, "deploy/demo-state.json");
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 
-export async function save(path, value) {
-  await mkdir(resolve(path, ".."), { recursive: true });
-  const temporary = `${path}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, (key, item) => key === "_state_path" ? undefined : item, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, path);
-}
-
 export async function load(path, fallback) {
   try { return JSON.parse(await readFile(path, "utf8")); }
   catch (error) { if (error?.code === "ENOENT") return fallback; throw error; }
 }
 
-async function loadWallets() {
-  const stored = await load(walletPath, null);
+export async function loadWallets(env = process.env, path = walletPath) {
+  if (env.V7_DEMO_WALLETS_JSON) {
+    let wallets;
+    try { wallets = JSON.parse(env.V7_DEMO_WALLETS_JSON); }
+    catch { throw new Error("V7_DEMO_WALLETS_JSON must be valid JSON."); }
+    const accounts = ["A", "B", "C", "D"].map((seat) => {
+      if (!/^0x[a-fA-F0-9]{64}$/.test(wallets?.[seat]?.privateKey || "")) throw new Error(`V7_DEMO_WALLETS_JSON needs a valid ${seat} key.`);
+      return createAccount(wallets[seat].privateKey).address.toLowerCase();
+    });
+    if (new Set(accounts).size !== 4) throw new Error("Demo seats need four distinct keys.");
+    return wallets;
+  }
+  const stored = await load(path, null);
   if (stored) return stored;
   const wallets = Object.fromEntries(["A", "B", "C", "D"].map((seat) => {
     const privateKey = generatePrivateKey();
     return [seat, { address: createAccount(privateKey).address, privateKey }];
   }));
-  await save(walletPath, wallets);
+  await save(path, wallets);
   return wallets;
 }
 
@@ -85,10 +91,10 @@ async function acceptedResult(client, txHash) {
     fullTransaction: true, hash: txHash, interval: 10_000, retries: 120,
     status: TransactionStatus.ACCEPTED,
   });
-  if (receipt.statusName !== TransactionStatus.ACCEPTED) throw new Error(`Transaction did not reach acceptance (${receipt.statusName ?? "unknown"}).`);
+  if (![TransactionStatus.ACCEPTED, TransactionStatus.FINALIZED].includes(receipt.statusName)) throw new Error(`Transaction did not reach acceptance (${receipt.statusName ?? "unknown"}).`);
   const { entries, leader } = leaderReceipt(receipt);
   const { consensus, execution } = resultNames(receipt, leader);
-  if (execution !== "SUCCESS" && execution !== "FINISHED_WITH_RETURN") throw new Error(`Accepted transaction has leader execution ${execution}.`);
+  if (!isAccepted({ consensus, execution })) throw new ScenarioStopError(`Accepted transaction has unexpected consensus/execution (${consensus}/${execution}).`);
   return { consensus, execution, return_value: leaderReturnValue(leader), errors: receiptErrors(entries), receipt };
 }
 
@@ -121,7 +127,9 @@ export async function executeStep(step, state, clients, accounts, contracts, opt
   record.contract = record.contract || step.contract;
   record.method = record.method || step.method;
   record.args = record.args || step.args;
-  if (record.status?.startsWith("FINALIZED_")) return record;
+  if (["FINALIZED_UNEXPECTED_RESULT", "FINALIZED_ERROR"].includes(record.status)) throw new ScenarioStopError(`Step ${step.id} previously failed; do not resume this story.`);
+  if (["FINALIZED_SUCCESS", "FINALIZED_EXPECTED_FAILURE"].includes(record.status)) return record;
+  if (options.acceptedOnly && record.status === "ACCEPTED_PENDING_FINALITY") return record;
   if (!record.tx_hash) {
     const hash = await clients[step.wallet].writeContract({
       account: accounts[step.wallet], address: contracts[step.contract], args: step.args,
@@ -143,7 +151,7 @@ export async function executeStep(step, state, clients, accounts, contracts, opt
     record.status = options.acceptedOnly ? "ACCEPTANCE_UNCERTAIN" : "PENDING_OR_UNAVAILABLE";
     state.steps[step.id] = record;
     await save(state._state_path, state);
-    throw new Error(`Step ${step.id} remains resumable at ${record.tx_hash}; receipt not ready: ${error.message}`);
+    throw error; // Preserve the retry/stop classification for the CI exit code.
   }
 
   record.execution_result = result.execution;
@@ -164,13 +172,13 @@ export async function executeStep(step, state, clients, accounts, contracts, opt
     record.status = failed ? "FINALIZED_EXPECTED_FAILURE" : "FINALIZED_UNEXPECTED_RESULT";
     if (!failed) {
       state.steps[step.id] = record; await save(state._state_path, state);
-      throw new Error(`Step ${step.id} did not produce expected failure ${step.expected_error_code}; recorded and stopped.`);
+      throw new ScenarioStopError(`Step ${step.id} did not produce expected failure ${step.expected_error_code}; recorded and stopped.`);
     }
   } else {
     record.status = accepted ? "FINALIZED_SUCCESS" : "FINALIZED_UNEXPECTED_RESULT";
     if (!accepted) {
       state.steps[step.id] = record; await save(state._state_path, state);
-      throw new Error(`Step ${step.id} finalized unexpectedly; recorded and stopped.`);
+      throw new ScenarioStopError(`Step ${step.id} finalized unexpectedly; recorded and stopped.`);
     }
   }
   for (const readback of step.readbacks || []) {
@@ -181,7 +189,7 @@ export async function executeStep(step, state, clients, accounts, contracts, opt
     if (readback.expected !== undefined && !sameJson(actual, readback.expected)) {
       record.readback = { ...(record.readback || {}), [readback.id]: actual };
       state.steps[step.id] = record; await save(state._state_path, state);
-      throw new Error(`Step ${step.id} read-back ${readback.id} did not match its expected value; recorded and stopped.`);
+      throw new ScenarioStopError(`Step ${step.id} read-back ${readback.id} did not match its expected value; recorded and stopped.`);
     }
     record.readback = { ...(record.readback || {}), [readback.id]: actual };
   }
@@ -196,8 +204,8 @@ export async function executeAcceptedBatch(steps, state, clients, accounts, cont
   for (const step of steps) {
     records.push(await executeStep(step, state, clients, accounts, contracts, { acceptedOnly: true, deferAcceptance: true }));
   }
-  await Promise.all(records.map(async (record) => {
-    if (record.status === "FINALIZED_SUCCESS") return record;
+  const settled = await Promise.allSettled(records.map(async (record) => {
+    if (["FINALIZED_SUCCESS", "ACCEPTED_PENDING_FINALITY"].includes(record.status)) return record;
     try {
       const result = await acceptedResult(clients[record.wallet], record.tx_hash);
       record.execution_result = result.execution;
@@ -211,15 +219,18 @@ export async function executeAcceptedBatch(steps, state, clients, accounts, cont
     } catch (error) {
       record.status = "ACCEPTANCE_UNCERTAIN";
       state.steps[record.id] = record;
-      throw new Error(`Step ${record.id} remains resumable at ${record.tx_hash}; receipt not ready: ${error.message}`);
+      throw error;
     }
   }));
   await save(state._state_path, state);
+  const failed = settled.find((result) => result.status === "rejected");
+  if (failed) throw failed.reason;
   return records;
 }
 
 export async function finalitySweep(state, clients) {
   for (const record of Object.values(state.steps || {})) {
+    if (["FINALIZED_UNEXPECTED_RESULT", "FINALIZED_ERROR"].includes(record.status)) throw new ScenarioStopError(`Recorded failure at ${record.id}; do not assemble proof.`);
     if (record.status !== "ACCEPTED_PENDING_FINALITY") continue;
     const result = await finalizedResult(clients[record.wallet], record.tx_hash);
     record.execution_result = result.execution;
@@ -230,7 +241,7 @@ export async function finalitySweep(state, clients) {
     if (!isAccepted(result)) {
       record.status = "FINALIZED_UNEXPECTED_RESULT";
       await save(state._state_path, state);
-      throw new Error(`Accepted step ${record.id} finalized unexpectedly; recorded and stopped.`);
+      throw new ScenarioStopError(`Accepted step ${record.id} finalized unexpectedly; recorded and stopped.`);
     }
     record.status = "FINALIZED_SUCCESS";
     await save(state._state_path, state);
@@ -263,6 +274,7 @@ export function createReadLimiter({ maxReads = 20, intervalMs = 60_000 } = {}) {
 }
 
 async function main() {
+  const runtime = runtimeLimit(process.argv.slice(2));
   if (process.argv[3] !== "--confirm-live-studionet") {
     throw new Error("This writes live StudioNet state. Re-run with <deployment-artifact.json> --confirm-live-studionet only after owner approval.");
   }
@@ -274,14 +286,20 @@ async function main() {
   const wallets = await loadWallets();
   const accounts = Object.fromEntries(Object.entries(wallets).map(([seat, wallet]) => [seat, createAccount(wallet.privateKey)]));
   const stage = requireStage("studionet"); const endpoint = endpointFor(stage);
+  installRpcRetries(endpoint);
   const clients = Object.fromEntries(Object.entries(accounts).map(([seat, account]) => [seat, clientFor(stage, account, endpoint)]));
   if (await clients.A.getChainId() !== stage.chainId) throw new Error("RPC chain mismatch; no demo transactions sent.");
   const state = await load(statePath, { version: 2, network: "studionet", deployment_artifact: artifactRef, steps: {} });
   state._state_path = statePath;
   if (state.network !== "studionet" || state.deployment_artifact !== artifactRef) throw new Error("Saved demo state belongs to another release.");
+  const walletAddresses = Object.fromEntries(Object.entries(accounts).map(([seat, account]) => [seat, account.address]));
+  if (state.wallet_addresses && !sameJson(state.wallet_addresses, walletAddresses)) throw new ScenarioStopError("Saved demo seats belong to different wallet keys; do not resume with replacement keys.");
+  state.wallet_addresses = walletAddresses;
+  await save(statePath, state);
   const waitForReadSlot = createReadLimiter();
   const context = {
     state,
+    runtime,
     read: async (request) => { await waitForReadSlot(); return contractRead(clients, contracts, request); },
     executeStep: (step, options) => executeStep(step, state, clients, accounts, contracts, options),
     submitAccepted: (step) => executeStep(step, state, clients, accounts, contracts, { acceptedOnly: true }),
@@ -297,6 +315,6 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error) => { console.error(error instanceof Error ? error.message : "V7 demo stopped safely."); process.exitCode = 1; });
+  main().catch((error) => { console.error(error instanceof Error ? error.message : "V7 demo stopped safely."); process.exitCode = exitCodeFor(error); });
 }
 
