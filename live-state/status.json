@@ -1,31 +1,33 @@
 {
-  "result": "RESUMABLE",
-  "exit_code": 75,
-  "mode": "deploy",
+  "result": "STOPPED",
+  "exit_code": 1,
+  "mode": "resume",
   "completed_stages": [
     "claims",
     "r1",
     "r2",
     "r3",
-    "r4"
+    "r4",
+    "r5"
   ],
   "current_game": {
-    "round_number": 5,
+    "round_number": 6,
     "phase": "READY_TO_ADVANCE"
   },
   "step_counts": {
-    "FINALIZED_SUCCESS": 7,
-    "ACCEPTED_PENDING_FINALITY": 44,
-    "FINALIZED_EXPECTED_FAILURE": 1
+    "FINALIZED_SUCCESS": 13,
+    "ACCEPTED_PENDING_FINALITY": 59,
+    "FINALIZED_EXPECTED_FAILURE": 2
   },
-  "stopped": null,
-  "paused": {
-    "location": "round 5 READY_TO_ADVANCE",
-    "at": "2026-10-18T12:46:32.103Z"
+  "stopped": {
+    "stage": "r6",
+    "message": "Version of JSON-RPC protocol is not supported.\n\nDetails: Server busy: all 8 execution slots occupied, retry later\nVersion: viem@2.55.19",
+    "exit_code": 1
   },
+  "paused": null,
   "proof_verified": false,
   "source_commit": "5fb8e54e7901e49f3dac82433969afa24e27d617",
-  "run_id": "39118206919",
-  "at": "2026-10-18T12:46:32.414Z",
+  "run_id": "39128701218",
+  "at": "2026-10-18T13:29:41.583Z",
   "release_record": "studionet-2026-10-18T10-15-55.673Z.json"
 }

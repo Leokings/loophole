@@ -1,0 +1,6 @@
+CHECKED: branch, pushed HEAD, secrets, timing and restored-state identity.
+GenLayer RPC error (gen_call): Server busy: all 8 execution slots occupied, retry later
+Version of JSON-RPC protocol is not supported.
+
+Details: Server busy: all 8 execution slots occupied, retry later
+Version: viem@2.55.19
