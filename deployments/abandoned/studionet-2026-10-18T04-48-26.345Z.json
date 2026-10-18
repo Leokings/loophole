@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "network": "studionet",
+  "chain_id": 61999,
+  "commit": "a59c069397ae5ddf6513ba533c91fcb7d9619f88",
+  "rpc_url": "https://studio.genlayer.com/api",
+  "contracts": {
+    "republic": {
+      "address": "0x25D1B1aD6bf0650dDBe5ed97e47136D387FB57B9",
+      "source_sha256": "9c45f06234ac684d92f318d0cf1715dd6e4ea4993b31b9daa38cf51ee13c44fd",
+      "deploy_tx": "0xed8200a894be6f7910ee70f0615f1d3fe8db06ef3aee7ae388922d5fa2652fd1"
+    },
+    "caseLaw": {
+      "address": "0xcEE1A3c08Af32B28387619Ef9FFc86f8184A8D80",
+      "source_sha256": "091cdcdb5596cd9ed8bec4fecb7912fb410f7d077e34dd0c729cf7c3518f6d50",
+      "deploy_tx": "0x57b103a8337310f0b9444c33c8207c02df69de1e413d3cfa6eaa81be78dc1537"
+    },
+    "court": {
+      "address": "0x359dAdfa71061a637d1d7A232FdF4a5fDC5A0234",
+      "source_sha256": "3774be8c3ee0b1bb49c1277512ae1c7aa0dd6da87a63578f4386d1643b57b913",
+      "deploy_tx": "0x83abfde3b8b1bd5204338ba31c918bf1b622635f9adb30b6a7606d2356bc4ba7"
+    }
+  },
+  "runner": {
+    "depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6",
+    "header_sha256": "d4654f0c2109340179260edfbfa2751588380de86100acbe23c641572b88cf6d",
+    "probe_address": "0xCb2a70F0CFd505026dc713283b62cA422d9ebB31",
+    "probe_source_sha256": "c888103d9b576d192de6d8f85fa94573052f4da1d138806461bb75f60669855f",
+    "probe_deploy_tx": "0x07a3f32024d6390d9f5b19b327f552fa13a996ec3c60a6217eab12932744390f",
+    "probe_write_tx": "0xbdf830df0a1ae7d545bbb3c288f111b2de93448d97c1a5f9cbc7f787764a2c88"
+  },
+  "toolchain": {
+    "genlayer_js": "1.1.8",
+    "node": "v24.19.0"
+  },
+  "constructor_args": {
+    "republic_id": "LOOPHOLE-STUDIONET-V7",
+    "faction_ids": [
+      "MERCHANTS",
+      "REFORMERS",
+      "TRADITIONALISTS",
+      "REVOLUTIONARIES"
+    ],
+    "briefSeconds": 600,
+    "commitSeconds": 1200,
+    "courtResolutionSeconds": 10800,
+    "fallbackGraceSeconds": 10800,
+    "judgmentWindowSeconds": 10800,
+    "keeperSlotSeconds": 900,
+    "revealSeconds": 600,
+    "seasonRounds": 12
+  },
+  "transactions": {
+    "probe.deploy": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x07a3f32024d6390d9f5b19b327f552fa13a996ec3c60a6217eab12932744390f",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE",
+      "contract": "0xCb2a70F0CFd505026dc713283b62cA422d9ebB31",
+      "method": "deploy",
+      "args": []
+    },
+    "probe.write": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0xbdf830df0a1ae7d545bbb3c288f111b2de93448d97c1a5f9cbc7f787764a2c88",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE",
+      "contract": "0xCb2a70F0CFd505026dc713283b62cA422d9ebB31",
+      "method": "write_probe",
+      "args": [
+        "loophole-v7-probe"
+      ]
+    },
+    "republic.deploy": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0xed8200a894be6f7910ee70f0615f1d3fe8db06ef3aee7ae388922d5fa2652fd1",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "caselaw.deploy": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x57b103a8337310f0b9444c33c8207c02df69de1e413d3cfa6eaa81be78dc1537",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "court.deploy": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x83abfde3b8b1bd5204338ba31c918bf1b622635f9adb30b6a7606d2356bc4ba7",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "caselaw.set_court": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x3bbd29af90a9c465092f1c7a95b3bbb0c99f9e136f5a878e4ee3c044013036b0",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "republic.set_links": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x57449362688b1c9a8bac9ea8d5ba04bf532c3ba7b15dcf0b51984183a8bb75a3",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE",
+      "contract": "0x25D1B1aD6bf0650dDBe5ed97e47136D387FB57B9",
+      "method": "set_links",
+      "args": [
+        "0x359dAdfa71061a637d1d7A232FdF4a5fDC5A0234",
+        "0xcEE1A3c08Af32B28387619Ef9FFc86f8184A8D80"
+      ]
+    },
+    "caseLaw.set_court": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x3bbd29af90a9c465092f1c7a95b3bbb0c99f9e136f5a878e4ee3c044013036b0",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE",
+      "contract": "0xcEE1A3c08Af32B28387619Ef9FFc86f8184A8D80",
+      "method": "set_court",
+      "args": [
+        "0x359dAdfa71061a637d1d7A232FdF4a5fDC5A0234"
+      ]
+    }
+  },
+  "generated_at": "2026-10-18T04:48:26.345Z"
+}
