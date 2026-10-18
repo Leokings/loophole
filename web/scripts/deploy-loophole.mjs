@@ -4,6 +4,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { createAccount } from "genlayer-js";
 import { CalldataAddress } from "genlayer-js/types";
@@ -12,6 +13,7 @@ import {
   projectRoot, requireStage, sha256,
 } from "./deployment-shared.mjs";
 import { releaseTimings } from "./v7-release-guards.mjs";
+import { exitCodeFor, installRpcRetries } from "./v7-runner-runtime.mjs";
 
 const execFile = promisify(execFileCallback);
 const statePath = resolve(projectRoot, ".live-evidence/v7-deployment-state.json");
@@ -34,11 +36,17 @@ function addressArgument(value) {
   return new CalldataAddress(Uint8Array.from(pairs, (pair) => Number.parseInt(pair, 16)));
 }
 
-async function assertReleaseBranch() {
+export function dirtyReleasePaths(dirty, inActions = process.env.GITHUB_ACTIONS === "true") {
+  return dirty.split(/\r?\n/).filter(Boolean).filter((line) => !(
+    inActions && /^\?\? deployments\/studionet-[\w.-]+\.json$/.test(line)
+  ));
+}
+
+export async function assertReleaseBranch() {
   const { stdout: branch } = await execFile("git", ["branch", "--show-current"], { cwd: projectRoot });
   if (branch.trim() !== "v7") throw new Error("Release build requires the v7 branch.");
   const { stdout: dirty } = await execFile("git", ["status", "--porcelain"], { cwd: projectRoot });
-  if (dirty.trim()) throw new Error("Release deployment requires a clean working tree.");
+  if (dirtyReleasePaths(dirty).length) throw new Error("Release deployment requires a clean working tree.");
   const { stdout: remotes } = await execFile("git", ["branch", "-r", "--contains", "HEAD"], { cwd: projectRoot });
   if (!remotes.trim()) throw new Error("Push v7 before any live deployment; HEAD is not on a remote branch.");
 }
@@ -93,6 +101,7 @@ async function main() {
   const timing = releaseTimings();
   const stage = requireStage("studionet");
   const endpoint = endpointFor(stage);
+  installRpcRetries(endpoint);
   const privateKey = String(process.env.GENLAYER_DEPLOYER_PRIVATE_KEY || "");
   if (!/^0x[a-fA-F0-9]{64}$/.test(privateKey)) throw new Error("Set a dedicated GENLAYER_DEPLOYER_PRIVATE_KEY in web/.env.local.");
   const account = createAccount(privateKey);
@@ -129,7 +138,7 @@ async function main() {
   const deployedProbeSource = await client.getContractCode(probeAddress);
   if (deployedProbeSource !== sources.probe) throw new Error("Runner probe source differs byte-for-byte from this commit.");
   const beforeProbe = await client.readContract({ address: probeAddress, functionName: "read_probe", jsonSafeReturn: true });
-  if (beforeProbe !== "") throw new Error("Probe started with unexpected state.");
+  if (!state.transactions["probe.write"]?.tx_hash && beforeProbe !== "") throw new Error("Probe started with unexpected state.");
   if (!state.transactions["probe.write"]?.tx_hash) {
     await transaction(state, "probe.write", () => client.writeContract({ account, address: probeAddress,
       args: ["loophole-v7-probe"], functionName: "write_probe", value: 0n }), client, "runner probe write");
@@ -180,4 +189,6 @@ async function main() {
   console.log(`Verified release record written to ${out}`);
 }
 
-main().catch((error) => { console.error(error instanceof Error ? error.message : "Release failed."); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => { console.error(error instanceof Error ? error.message : "Release failed."); process.exitCode = exitCodeFor(error); });
+}

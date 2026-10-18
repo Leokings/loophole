@@ -1,0 +1,109 @@
+name: live-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "check validates setup; deploy starts a new world; resume continues saved state"
+        type: choice
+        required: true
+        default: resume
+        options:
+          - check
+          - deploy
+          - resume
+
+concurrency:
+  group: live-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      LIVE_MODE: ${{ inputs.mode }}
+      GENLAYER_DEPLOYER_PRIVATE_KEY: ${{ secrets.GENLAYER_DEPLOYER_PRIVATE_KEY }}
+      V7_DEMO_WALLETS_JSON: ${{ secrets.V7_DEMO_WALLETS_JSON }}
+      LOOPHOLE_COMMIT_SECONDS: "1200"
+      LOOPHOLE_REVEAL_SECONDS: "600"
+      LOOPHOLE_REPUBLIC_ID: LOOPHOLE-STUDIONET-V7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v7
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+        working-directory: web
+
+      # Keep add-mask commands out of the on-disk run log.
+      - name: Mask the individual throwaway keys
+        run: node scripts/live-release-state.mjs mask
+        working-directory: web
+
+      - name: Restore checkpoints from live-state
+        id: restore
+        run: node scripts/live-release-state.mjs restore
+        working-directory: web
+
+      - name: Check setup or run the resumable live release
+        id: run
+        # Leave time for always() checkpointing if a network call hangs.
+        timeout-minutes: 320
+        shell: bash
+        working-directory: web
+        run: |
+          mkdir -p ../.live-evidence/actions
+          set +e
+          node scripts/live-release-state.mjs execute "$LIVE_MODE" 2>&1 | tee ../.live-evidence/actions/run.log
+          result=${PIPESTATUS[0]}
+          printf 'exit_code=%s\n' "$result" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Assemble and verify completed proof
+        id: proof
+        timeout-minutes: 15
+        if: steps.run.outputs.exit_code == '0' && inputs.mode != 'check'
+        working-directory: web
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/live-release-state.mjs proof 2>&1 | tee -a ../.live-evidence/actions/run.log
+
+      - name: Always checkpoint state and logs
+        id: persist
+        if: always() && steps.restore.outcome == 'success' && inputs.mode != 'check'
+        working-directory: web
+        env:
+          RUN_EXIT_CODE: ${{ steps.run.outputs.exit_code || '1' }}
+        run: node scripts/live-release-state.mjs persist "$LIVE_MODE" "$RUN_EXIT_CODE"
+
+      - name: Write run summary
+        if: always()
+        working-directory: web
+        env:
+          RUN_EXIT_CODE: ${{ steps.run.outputs.exit_code || '1' }}
+        run: node scripts/live-release-state.mjs summary "$LIVE_MODE" "$RUN_EXIT_CODE"
+
+      - name: Queue the next checkpoint job
+        if: steps.persist.outcome == 'success' && (steps.run.outputs.exit_code == '75' || steps.run.outputs.exit_code == '3') && inputs.mode != 'check'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run live-release.yml --ref v7 -f mode=resume
+
+      - name: Mark an unexpected stop as failed
+        if: steps.run.outputs.exit_code != '0' && steps.run.outputs.exit_code != '75' && steps.run.outputs.exit_code != '3'
+        run: exit 1
