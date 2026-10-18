@@ -1,0 +1,8 @@
+{
+  "reason": "Execution-slot congestion was misclassified as fatal; pending cases B/C expired before recovery. Original story cannot resume unchanged.",
+  "checkpoint_commit": "5a253e83d6b90f027e8332fa60a05671feee7f66",
+  "original_source_commit": "5fb8e54e7901e49f3dac82433969afa24e27d617",
+  "next_source_commit": "8c085efd52a95891f5463b1bf3fd1dcd21c2373d",
+  "at": "2026-10-18T18:03:01.037Z",
+  "scope": "Historical partial evidence only; original receipts and logs retained. Active checkpoints cleared for an owner-authorized fresh world."
+}
