@@ -1,0 +1,31 @@
+{
+  "result": "RESUMABLE",
+  "exit_code": 75,
+  "mode": "deploy",
+  "completed_stages": [
+    "claims",
+    "r1",
+    "r2",
+    "r3",
+    "r4"
+  ],
+  "current_game": {
+    "round_number": 5,
+    "phase": "READY_TO_ADVANCE"
+  },
+  "step_counts": {
+    "FINALIZED_SUCCESS": 7,
+    "ACCEPTED_PENDING_FINALITY": 44,
+    "FINALIZED_EXPECTED_FAILURE": 1
+  },
+  "stopped": null,
+  "paused": {
+    "location": "round 5 READY_TO_ADVANCE",
+    "at": "2026-10-18T12:46:32.103Z"
+  },
+  "proof_verified": false,
+  "source_commit": "5fb8e54e7901e49f3dac82433969afa24e27d617",
+  "run_id": "39118206919",
+  "at": "2026-10-18T12:46:32.414Z",
+  "release_record": "studionet-2026-10-18T10-15-55.673Z.json"
+}
