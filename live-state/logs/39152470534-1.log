@@ -1,0 +1,4 @@
+CHECKED: branch, pushed HEAD, secrets, timing and restored-state identity.
+Verified release record written to /home/runner/work/loophole/loophole/deployments/studionet-2026-10-18T18-09-40.367Z.json
+GenLayer RPC error (gen_call): execution failed
+PAUSED_SAFE: round 5 READY_TO_ADVANCE

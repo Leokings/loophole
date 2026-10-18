@@ -1,0 +1,62 @@
+{
+  "commit": "8c085efd52a95891f5463b1bf3fd1dcd21c2373d",
+  "created_at": "2026-10-18T18:04:43.910Z",
+  "transactions": {
+    "probe.deploy": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x0027fd6faebd8ffc152707450bf1d76bd9086f4286e917f5655c98da7f4e2012",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "probe.write": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x5fd8ee558a949ae2a244d75b33a15d905406f07b061428d6962069eb38f987c2",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "republic.deploy": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0xc6d33e2379086a36ca80d1e385120309ee52aaf2f7fd514063ffc31657b5e17a",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "caselaw.deploy": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x38766d4242dd5da5c364cde77f32fdfac36d612571bda5b06723fcba81ee7536",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "court.deploy": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0x5a68b6159f54b35f45f028ff454d540cf31bd97aacf281efdf7782fe6a37314c",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "caselaw.set_court": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0xcede0bd4ce70689abcc966de4b4b0ea58c217750fc87297f6dbe6143febda37e",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    },
+    "republic.set_links": {
+      "status": "FINALIZED_SUCCESS",
+      "tx_hash": "0xdbfd04abe5218ee5f96a72c8e2f917bf910b4d365703cdbaa567e4745eefd073",
+      "execution_result": "SUCCESS",
+      "consensus_result": "AGREE"
+    }
+  },
+  "contracts": {
+    "probe": {
+      "address": "0xF011431e1e8adca9413024c277Cc3F17f5bb8644"
+    },
+    "republic": {
+      "address": "0x7E3304b9D21Aa7071697F39Db3743828C39f4681"
+    },
+    "caseLaw": {
+      "address": "0xE612FF66Ee8a019ccdeC5F6E28e1a8aBF39FBDEf"
+    },
+    "court": {
+      "address": "0xB055d688A2c48317eD4E40086dDF734b80B3d561"
+    }
+  }
+}
