@@ -134,3 +134,74 @@ workflow test passed. GitHub's API confirms `live-release` is active and has
 This closes the workflow-registration prerequisite recorded above. Repository
 secrets, the first owner-started `check`/`deploy`, and live evidence remain
 pending; the local-testing and evidence boundaries in this report still apply.
+
+## GitHub attempt 3 and congestion fix — 2026-10-18
+
+The owner subsequently authorized adding the dedicated Actions secrets and
+starting `check`, then `deploy`. The preflight
+[39118117277](https://github.com/Leokings/loophole/actions/runs/39118117277)
+passed. Deployment/demo job
+[39118206919](https://github.com/Leokings/loophole/actions/runs/39118206919)
+saved its checkpoint and automatically dispatched
+[39128701218](https://github.com/Leokings/loophole/actions/runs/39128701218).
+The handoff between GitHub jobs worked; the second job stopped at r6.
+
+- Source: `5fb8e54e7901e49f3dac82433969afa24e27d617`.
+- Republic: `0x0353D0C82e8CC5C6387Bb1f5252070bbE25D3B77`.
+- CaseLaw: `0x2Ea38502588e4C5D63651e4c690467f44135aF67`.
+- Court: `0x1175adA25D6865bAa2C93510d847f7cB0520b17F`.
+- Deployment record: `deployments/abandoned/studionet-2026-10-18T10-15-55.673Z.json`.
+- Preserved checkpoint: `live-state` commit
+  `5a253e83d6b90f027e8332fa60a05671feee7f66`.
+- Saved completed stages: claims, r1–r5; r6 READY_TO_ADVANCE, with all eight
+  commit/reveal records present. The snapshot still labels 59 records
+  ACCEPTED_PENDING_FINALITY; these are not asserted to be finalized here.
+
+Failure at 13:29 UTC, quoted from the second job:
+
+```text
+GenLayer RPC error (gen_call): Server busy: all 8 execution slots occupied, retry later
+Version of JSON-RPC protocol is not supported.
+Details: Server busy: all 8 execution slots occupied, retry later
+Version: viem@2.55.19
+```
+
+The transport retried HTTP congestion but did not recognize the equivalent
+HTTP-200 JSON-RPC error, so it exited 1 instead of 3. The fix recognizes the
+specific execution-slot message, retries the identical payload six times with
+15-second linear backoff, and preserves the resumable error through the SDK.
+Ordinary `-32600` errors remain fatal; wrapped scenario stops are never retried.
+Retry notices contain no RPC arguments or signed payloads.
+
+At the recovery inspection the republic remained at round 6 READY_TO_ADVANCE,
+but cases 2 and 3 remained BRIEFING beyond their on-chain resolution deadlines.
+`RepublicCourt.resolve_case` correctly refuses them. The reviewed story cannot
+continue unchanged. This attempt is archived, not relabeled successful. A fresh
+world is required; contracts, deadlines, case outcomes and scenario steps are
+unchanged. No production hosting, keeper or Portal changes accompany this fix.
+
+### Independently checked partial live evidence
+
+At 18:00 UTC the read-only SDK checks confirmed case 1 DECIDED / NOT_COVERED /
+NO_VIOLATION / NONE, a permanent holding for `2|UNDERMINE|OTHER_FACTION`, and
+ruling transaction `0x0d57f557144a53d1438388d4d68c602ee6c20f0de87bcf0de0e4456606405a2f`
+FINALIZED with leader SUCCESS. The observed values are preserved in
+`deployments/abandoned/studionet-2026-10-18T10-15-55.673Z.partial-evidence.json`.
+This proves the first safe harbor on that historical world; it does not prove
+summary reuse, the breach/injection cases, amendment closure, the final fallback,
+the browser-wallet path, or the completed V7 release.
+
+### Regression and release gates
+
+- `python scripts/verify.py --integration`: passed (99 direct, 2 five-validator
+  integration, 82 web tests, web build, 5 scheduler tests and scheduler dry-run).
+- Final `npm run check`: passed (83 web tests across 13 files, lint, typecheck
+  and build), including the added installed-SDK propagation regression.
+- Regression coverage: execution-slot JSON-RPC error in HTTP 200; identical
+  signed payload on every retry; six-retry exhaustion → exit 3; nested SDK
+  wrapping; ordinary protocol errors remain non-retryable; wrapped scenario
+  stops remain non-retryable.
+- Technical gate: local fix verified; rerun required for completed live proof.
+- Distinctiveness: unchanged V7 contracts/mechanism; final review remains pending.
+- Evidence gate: FAIL for a completed V7 release; partial first-impression
+  evidence above is valid and explicitly historical.

@@ -56,9 +56,12 @@ export function isTransient(error) {
   const seen = new Set();
   for (let item = error; item && !seen.has(item); item = item.cause) {
     seen.add(item);
+    if (item instanceof ScenarioStopError || item instanceof SafePauseError) return false;
     messages.push(item.message, item.shortMessage, item.details, item.code, item.status, item.statusCode);
   }
-  return /\b(429|502|503|504|ECONNRESET|ETIMEDOUT)\b|temporarily unavailable|resource not available|fetch failed/i.test(messages.filter(Boolean).join(" "));
+  // StudioNet also returns congestion as a JSON-RPC error in an HTTP 200
+  // response. Its -32600 code alone is not retryable: require the busy detail.
+  return /\b(429|502|503|504|ECONNRESET|ETIMEDOUT)\b|temporarily unavailable|resource not available|fetch failed|server busy:\s*all \d+ execution slots occupied,\s*retry later/i.test(messages.filter(Boolean).join(" "));
 }
 
 export async function retryTransient(operation, options = {}) {
@@ -67,6 +70,7 @@ export async function retryTransient(operation, options = {}) {
     catch (error) {
       if (error instanceof TransientRunError || !isTransient(error)) throw error;
       if (attempt === 6) throw new TransientRunError("Transient RPC failure after six retries; the saved run is resumable.", error);
+      (options.warn || console.warn)(`RPC temporarily unavailable; retry ${attempt + 1}/6 in ${15 * (attempt + 1)} seconds.`);
       await (options.sleep || delay)(15_000 * (attempt + 1));
     }
   }
@@ -86,7 +90,10 @@ export function installRpcRetries(endpoint, options = {}) {
       }
       if (response.ok) {
         const body = await response.clone().json().catch(() => null);
-        if (body?.error && isTransient(body.error)) throw new Error(body.error.message || "resource not available");
+        if (body?.error && isTransient(body.error)) {
+          await response.body?.cancel();
+          throw new Error(body.error.message || "resource not available", { cause: body.error });
+        }
       }
       return response;
     }, options);

@@ -2,10 +2,11 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { generatePrivateKey } from "genlayer-js";
+import { createClient, generatePrivateKey } from "genlayer-js";
+import { studionet } from "genlayer-js/chains";
 import { executeStep, loadWallets } from "./run-v7-demo.mjs";
 import { FACTIONS, play, runScenario, stages } from "./v7-demo-scenario.mjs";
-import { SafePauseError, ScenarioStopError, TransientRunError, exitCodeFor, installRpcRetries, retryTransient, runtimeLimit, save } from "./v7-runner-runtime.mjs";
+import { SafePauseError, ScenarioStopError, TransientRunError, exitCodeFor, installRpcRetries, isTransient, retryTransient, runtimeLimit, save } from "./v7-runner-runtime.mjs";
 
 const actions = () => FACTIONS.map((faction) => ({ faction, action_type: "BUILD_INFLUENCE", rationale: "Build influence during the round.", stances: [] }));
 
@@ -177,6 +178,59 @@ describe("V7 runner robustness", () => {
     await rpc("https://studio.genlayer.com/api", init);
     expect(fetch.mock.calls[0][1]).toBe(init);
     expect(fetch.mock.calls[1][1]).toBe(init);
+  });
+
+  it("retries StudioNet execution-slot congestion inside an HTTP 200 JSON-RPC response", async () => {
+    const busy = { jsonrpc: "2.0", id: 7, error: { code: -32600, message: "Server busy: all 8 execution slots occupied, retry later" } };
+    const fetch = vi.fn()
+      .mockImplementationOnce(async () => Response.json(busy))
+      .mockImplementationOnce(async () => Response.json(busy))
+      .mockImplementation(async () => Response.json({ jsonrpc: "2.0", id: 7, result: "0xhash" }));
+    const sleep = vi.fn(); const warn = vi.fn();
+    const rpc = installRpcRetries("https://studio.genlayer.com/api", { fetch, sleep, warn });
+    const init = { method: "POST", body: '{"jsonrpc":"2.0","id":7,"method":"eth_sendRawTransaction","params":["signed-bytes"]}' };
+    expect(await (await rpc("https://studio.genlayer.com/api", init)).json()).toMatchObject({ result: "0xhash" });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    for (const [, sent] of fetch.mock.calls) expect(sent).toBe(init);
+    expect(sleep.mock.calls).toEqual([[15_000], [30_000]]);
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("signed-bytes");
+  });
+
+  it("classifies nested execution-slot exhaustion as resumable after six retries", async () => {
+    const busy = { code: -32600, message: "Server busy: all 8 execution slots occupied, retry later" };
+    const fetch = vi.fn(async () => Response.json({ jsonrpc: "2.0", id: 1, error: busy }));
+    const rpc = installRpcRetries("https://studio.genlayer.com/api", { fetch, sleep: vi.fn(), warn: vi.fn() });
+    const failure = await rpc("https://studio.genlayer.com/api", { method: "POST", body: '{"method":"gen_call"}' }).catch((error) => error);
+    expect(fetch).toHaveBeenCalledTimes(7);
+    expect(exitCodeFor(new Error("SDK wrapper", { cause: failure }))).toBe(3);
+    expect(isTransient(new Error("Version of JSON-RPC protocol is not supported.", { cause: busy }))).toBe(true);
+  });
+
+  it("does not retry ordinary JSON-RPC protocol errors or wrapped scenario stops", async () => {
+    const fetch = vi.fn(async () => Response.json({ error: { code: -32600, message: "Version of JSON-RPC protocol is not supported." } }));
+    const sleep = vi.fn();
+    const rpc = installRpcRetries("https://studio.genlayer.com/api", { fetch, sleep });
+    expect((await (await rpc("https://studio.genlayer.com/api", {})).json()).error.code).toBe(-32600);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    const stop = new Error("RPC 503 wrapper", { cause: new ScenarioStopError("unexpected judgment") });
+    expect(isTransient(stop)).toBe(false);
+    const operation = vi.fn().mockRejectedValue(stop);
+    await expect(retryTransient(operation, { sleep })).rejects.toBe(stop);
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the resumable exit code through the installed GenLayer SDK", async () => {
+    const original = globalThis.fetch;
+    const fetch = vi.fn(async () => Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32600, message: "Server busy: all 8 execution slots occupied, retry later" } }));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      globalThis.fetch = installRpcRetries("https://studio.genlayer.com/api", { fetch, sleep: vi.fn(), warn: vi.fn() });
+      const client = createClient({ chain: studionet, endpoint: "https://studio.genlayer.com/api" });
+      const error = await client.readContract({ address: "0x1111111111111111111111111111111111111111", functionName: "get_game", args: [], jsonSafeReturn: true }).catch((failure) => failure);
+      expect(fetch).toHaveBeenCalledTimes(7);
+      expect(exitCodeFor(error)).toBe(3);
+    } finally { globalThis.fetch = original; log.mockRestore(); }
   });
 
   it("uses a recorded transaction hash without submitting another write", async () => {

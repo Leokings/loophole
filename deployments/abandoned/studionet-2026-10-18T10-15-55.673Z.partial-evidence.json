@@ -1,0 +1,30 @@
+{
+  "scope": "partial; this is not the completed V7 proof",
+  "source_commit": "5fb8e54e7901e49f3dac82433969afa24e27d617",
+  "checkpoint_commit": "5a253e83d6b90f027e8332fa60a05671feee7f66",
+  "observed_at": "2026-10-18T18:00:49.892Z",
+  "caseA": {
+    "case_id": 1,
+    "status": "DECIDED",
+    "label": "NOT_COVERED",
+    "quote": "No faction may UNDERMINE a faction that holds public office.",
+    "verdict": "NO_VIOLATION",
+    "sanction": "NONE"
+  },
+  "holding": {
+    "action_type": "UNDERMINE",
+    "case_id": 1,
+    "key": "2|UNDERMINE|OTHER_FACTION",
+    "label": "NOT_COVERED",
+    "law_id": 2,
+    "quote": "No faction may UNDERMINE a faction that holds public office.",
+    "recorded_at": 1792330176,
+    "ruling_digest": "624b86126af70416b13831b2e6d730e948440dfed2264c1f1272b1af72541abb",
+    "target_class": "OTHER_FACTION"
+  },
+  "ruling_transaction": {
+    "hash": "0x0d57f557144a53d1438388d4d68c602ee6c20f0de87bcf0de0e4456606405a2f",
+    "status": "FINALIZED",
+    "execution": "SUCCESS"
+  }
+}

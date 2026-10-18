@@ -99,6 +99,18 @@ moves. If a job is cancelled or times out, inspect the saved state and summary
 before manually using `resume`; a missed scripted window requires a new world.
 If restoration or checkpoint persistence fails, no next job is queued.
 
+Execution-slot congestion (`Server busy: all 8 execution slots occupied, retry
+later`) is also transient, even when StudioNet returns HTTP 200 with JSON-RPC
+code `-32600`. The runner retries that specific response with the identical
+request; it does not retry every protocol error. Retry messages contain only
+the attempt number and wait time. Exhaustion exits 3 for checkpoint/resume.
+Unexpected judgments and scenario guards still stop immediately.
+
+A READY round does not freeze court deadlines. A case still in BRIEFING after
+`brief_deadline + resolution_seconds` cannot be resolved by the reviewed story.
+Preserve such an attempt and start a new world; do not clear its stop marker,
+edit its receipts, or change the deployed deadline to pretend it completed.
+
 GitHub concurrency allows one active live-release job. A queued continuation uses
 `GITHUB_TOKEN` with `actions: write`; GitHub explicitly permits
 [workflow-dispatch events from workflows](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
