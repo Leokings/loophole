@@ -1,0 +1,2 @@
+# Contract sources must be byte-identical on-chain and in git (GenLayer guide section 5).
+*.py text eol=lf
