@@ -1,31 +1,34 @@
 {
-  "result": "RESUMABLE",
-  "exit_code": 75,
-  "mode": "deploy",
+  "result": "STOPPED",
+  "exit_code": 2,
+  "mode": "resume",
   "completed_stages": [
     "claims",
     "r1",
     "r2",
     "r3",
-    "r4"
+    "r4",
+    "r5",
+    "r6"
   ],
   "current_game": {
-    "round_number": 5,
+    "round_number": 7,
     "phase": "READY_TO_ADVANCE"
   },
   "step_counts": {
-    "FINALIZED_SUCCESS": 7,
-    "ACCEPTED_PENDING_FINALITY": 44,
-    "FINALIZED_EXPECTED_FAILURE": 1
+    "FINALIZED_SUCCESS": 18,
+    "ACCEPTED_PENDING_FINALITY": 68,
+    "FINALIZED_EXPECTED_FAILURE": 4
   },
-  "stopped": null,
-  "paused": {
-    "location": "round 5 READY_TO_ADVANCE",
-    "at": "2026-10-18T20:40:01.273Z"
+  "stopped": {
+    "stage": "r7",
+    "message": "Case A recovery did not report both effect flags as false.",
+    "exit_code": 2
   },
+  "paused": null,
   "proof_verified": false,
   "source_commit": "8c085efd52a95891f5463b1bf3fd1dcd21c2373d",
-  "run_id": "39152470534",
-  "at": "2026-10-18T20:40:01.560Z",
+  "run_id": "39164345888",
+  "at": "2026-10-18T22:01:17.367Z",
   "release_record": "studionet-2026-10-18T18-09-40.367Z.json"
 }

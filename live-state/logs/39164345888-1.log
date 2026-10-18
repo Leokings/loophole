@@ -1,0 +1,4 @@
+CHECKED: branch, pushed HEAD, secrets, timing and restored-state identity.
+RPC temporarily unavailable; retry 1/6 in 15 seconds.
+RPC temporarily unavailable; retry 1/6 in 15 seconds.
+Case A recovery did not report both effect flags as false.
