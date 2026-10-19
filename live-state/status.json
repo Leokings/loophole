@@ -20,6 +20,8 @@
     "ACCEPTED_PENDING_FINALITY": 68,
     "FINALIZED_EXPECTED_FAILURE": 4
   },
+  "checkpoint_commit": "8c085efd52a95891f5463b1bf3fd1dcd21c2373d",
+  "resume_commit": "8fd0ead3341fda6cecddecdfb1c835c3b8914d08",
   "stopped": {
     "stage": "r7",
     "message": "Case A recovery did not report both effect flags as false.",
@@ -27,8 +29,8 @@
   },
   "paused": null,
   "proof_verified": false,
-  "source_commit": "a7381e521d23289ab4658aae10d4a52fff032519",
-  "run_id": "39215911174",
-  "at": "2026-10-19T07:26:07.939Z",
+  "source_commit": "8fd0ead3341fda6cecddecdfb1c835c3b8914d08",
+  "run_id": "39219429093",
+  "at": "2026-10-19T07:58:17.149Z",
   "release_record": null
 }
