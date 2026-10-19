@@ -5,6 +5,7 @@ import { createClient } from "genlayer-js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { assertSuccessfulReceipt, endpointFor, requireStage, sha256 } from "./deployment-shared.mjs";
+import { assertProofTransactionReceipt } from "./proof-receipt.mjs";
 
 const root = resolve(process.cwd(), "..");
 const proofPath = resolve(root, "deploy/proof.json");
@@ -12,14 +13,6 @@ const publicProofPath = resolve(root, "web/public/proof.json");
 const hashPattern = /^0x[a-fA-F0-9]{64}$/;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 
-function sameAddress(a, b) { return String(a || "").toLowerCase() === String(b || "").toLowerCase(); }
-function hasMethod(value, method) {
-  if (typeof value === "string") return value === method;
-  if (Array.isArray(value)) return value.some((entry) => hasMethod(entry, method));
-  if (value instanceof Map) return value.has(method) || [...value.entries()].some(([key, entry]) => key === method || hasMethod(entry, method));
-  if (value && typeof value === "object") return Object.entries(value).some(([key, entry]) => key === method || hasMethod(entry, method));
-  return false;
-}
 function txConsensus(tx) {
   const votes = tx.consensus_data?.votes ?? {};
   return Object.values(votes);
@@ -68,13 +61,7 @@ async function main() {
   for (const item of txs) {
     if (!hashPattern.test(item.tx_hash ?? "")) throw new Error(`Invalid transaction hash in proof record ${item.id || item.method || "unknown"}.`);
     const receipt = await client.getTransaction({ hash: item.tx_hash });
-    if (receipt.statusName !== "FINALIZED") throw new Error(`Transaction ${item.tx_hash} is not finalized.`);
-    if (item.contract && !sameAddress(receipt.to_address ?? receipt.recipient, item.contract)) throw new Error(`Transaction recipient mismatch for ${item.tx_hash}.`);
-    const decoded = receipt.txDataDecoded;
-    const deploy = item.method === "deploy" || decoded?.type === "deploy";
-    if (item.method === "deploy" && decoded?.type !== "deploy") throw new Error(`Transaction ${item.tx_hash} is not a deployment.`);
-    if (item.method !== "deploy" && decoded?.type === "deploy") throw new Error(`Transaction ${item.tx_hash} is a deployment, expected ${item.method}.`);
-    if (item.method && !deploy && !hasMethod(decoded?.callData, item.method)) throw new Error(`Decoded calldata does not identify ${item.method} for ${item.tx_hash}.`);
+    assertProofTransactionReceipt(item, receipt);
     if (!item.expected_failure) assertSuccessfulReceipt(receipt, item.title || item.id || item.tx_hash);
     else {
       if (receipt.txExecutionResultName === "FINISHED_WITH_RETURN") throw new Error(`Expected-failure step ${item.id} executed successfully.`);
