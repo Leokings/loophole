@@ -26,8 +26,10 @@ async function repository() {
   await git(root, ["init", "-b", "v7"]);
   await git(root, ["config", "user.name", "Checkpoint tests"]);
   await git(root, ["config", "user.email", "tests@example.invalid"]);
+  await mkdir(join(root, "contracts"));
+  await writeFile(join(root, "contracts", "AutonomousRepublic.py"), "checkpoint contract source\n");
   await writeFile(join(root, "README.md"), "Source checkout\n");
-  await git(root, ["add", "README.md"]);
+  await git(root, ["add", "README.md", "contracts/AutonomousRepublic.py"]);
   await git(root, ["commit", "-m", "source"]);
   await git(root, ["remote", "add", "origin", remote]);
   await git(root, ["push", "-u", "origin", "v7"]);
@@ -51,7 +53,7 @@ describe("GitHub live-release checkpoints", () => {
     expect(() => assertNoSecrets('{"tx_hash":"0xpublic"}', {})).not.toThrow();
   });
 
-  it("round-trips allowlisted state through a local bare remote without changing v7", async () => {
+  it("round-trips allowlisted state without updating the source branch", async () => {
     const { folder, root, commit } = await repository();
     try {
       await restoreState(root); // A missing branch is an empty start, not an error.
@@ -63,12 +65,20 @@ describe("GitHub live-release checkpoints", () => {
       await mkdir(join(root, ".live-evidence/actions"), { recursive: true });
       await writeFile(join(root, ".live-evidence/v7-deployment-state.json"), JSON.stringify({ commit, transactions: {} }));
       await writeFile(join(root, ".live-evidence/actions/run.log"), "Private sentinel: secret-to-redact\n");
+      await mkdir(join(root, "web/scripts"), { recursive: true });
+      await writeFile(join(root, "web/scripts/runner.mjs"), "runner-only change\n");
+      await git(root, ["add", "web/scripts/runner.mjs"]);
+      await git(root, ["commit", "-m", "runner-only change"]);
+      const resumeCommit = await git(root, ["rev-parse", "HEAD"]);
       const env = { ...process.env, GENLAYER_DEPLOYER_PRIVATE_KEY: "secret-to-redact", GITHUB_RUN_ID: "123" };
       await persistState(root, "resume", 75, env);
-      expect(await git(root, ["rev-parse", "HEAD"])).toBe(commit);
+      expect(await git(root, ["rev-parse", "HEAD"])).toBe(resumeCommit);
+      expect(await git(root, ["rev-parse", "refs/remotes/origin/v7"])).toBe(commit);
       const content = await git(root, ["show", "refs/remotes/origin/live-state:live-state/logs/123-1.log"]);
       expect(content).toContain("[REDACTED]");
       expect(content).not.toContain("secret-to-redact");
+      const firstCheckpoint = JSON.parse(await git(root, ["show", "refs/remotes/origin/live-state:live-state/status.json"]));
+      expect(firstCheckpoint).toMatchObject({ checkpoint_commit: commit, resume_commit: resumeCommit });
       await rm(join(root, "deploy/demo-state.json"));
       await restoreState(root);
       expect(JSON.parse(await readFile(join(root, "deploy/demo-state.json"), "utf8"))).toEqual(state);
@@ -81,16 +91,42 @@ describe("GitHub live-release checkpoints", () => {
     } finally { await rm(folder, { recursive: true, force: true }); }
   }, 15_000);
 
-  it("checks valid secrets and restored state without any live RPC request", async () => {
+  it("allows runner-only commits while preserving the checkpoint deployment", async () => {
     const { folder, root, commit } = await repository();
     try {
       const env = keys();
-      const result = await checkPreconditions(root, env, false);
-      expect(result.commit).toBe(commit);
-      expect(result.release).toBeNull();
       await mkdir(join(root, ".live-evidence/actions"), { recursive: true });
-      await writeFile(join(root, ".live-evidence/actions/restored-status.json"), JSON.stringify({ source_commit: "another-commit" }));
-      await expect(checkPreconditions(root, env, false)).rejects.toThrow("different source commit");
+      await writeFile(join(root, ".live-evidence/v7-deployment-state.json"), JSON.stringify({ commit, transactions: {} }));
+      await writeFile(join(root, ".live-evidence/actions/restored-status.json"), JSON.stringify({ source_commit: commit }));
+      const releasePath = "deployments/studionet-checkpoint.json";
+      await writeFile(join(root, releasePath), JSON.stringify(release(commit)));
+      await mkdir(join(root, "deploy"), { recursive: true });
+      await writeFile(join(root, "deploy/demo-state.json"), JSON.stringify({ deployment_artifact: releasePath }));
+      await mkdir(join(root, "web/scripts"), { recursive: true });
+      await writeFile(join(root, "web/scripts/runner.mjs"), "runner-only change\n");
+      await git(root, ["add", "web/scripts/runner.mjs"]);
+      await git(root, ["commit", "-m", "runner-only change"]);
+      const resumeCommit = await git(root, ["rev-parse", "HEAD"]);
+
+      const result = await checkPreconditions(root, env, false);
+      expect(result).toMatchObject({
+        checkpoint_commit: commit,
+        resume_commit: resumeCommit,
+        release: { path: releasePath, record: { commit } },
+      });
+    } finally { await rm(folder, { recursive: true, force: true }); }
+  }, 15_000);
+
+  it("refuses a restored checkpoint when contract sources changed", async () => {
+    const { folder, root, commit } = await repository();
+    try {
+      const env = keys();
+      await mkdir(join(root, ".live-evidence/actions"), { recursive: true });
+      await writeFile(join(root, ".live-evidence/actions/restored-status.json"), JSON.stringify({ source_commit: commit }));
+      await writeFile(join(root, "contracts/AutonomousRepublic.py"), "changed contract source\n");
+      await git(root, ["add", "contracts/AutonomousRepublic.py"]);
+      await git(root, ["commit", "-m", "change contract"]);
+      await expect(checkPreconditions(root, env, false)).rejects.toThrow("Checkpoint belongs to a different source commit; contract sources changed.");
     } finally { await rm(folder, { recursive: true, force: true }); }
   }, 15_000);
 
@@ -114,5 +150,9 @@ describe("GitHub live-release checkpoints", () => {
     expect(summarize(demo, 2, false, "resume").result).toBe("STOPPED");
     expect(summarize(demo, 0, false, "check").result).toBe("CHECKED");
     expect(summarize(demo, 75, false, "resume").step_counts).toEqual({ ACCEPTED_PENDING_FINALITY: 1 });
+    expect(summarize(demo, 75, false, "resume", { checkpoint_commit: "8c085ef", resume_commit: "a7381e5" })).toMatchObject({
+      checkpoint_commit: "8c085ef",
+      resume_commit: "a7381e5",
+    });
   });
 });

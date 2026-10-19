@@ -19,6 +19,18 @@ const releaseName = /^studionet-[\w.-]+\.json$/;
 async function git(root, args, extra = {}) {
   return (await exec("git", args, { cwd: root, maxBuffer: 32 * 1024 * 1024, ...extra })).stdout.trimEnd();
 }
+async function assertCheckpointContractsUnchanged(root, checkpointCommit, resumeCommit) {
+  if (checkpointCommit === resumeCommit) return;
+  try {
+    await git(root, ["diff", "--quiet", checkpointCommit, "HEAD", "--", "contracts/"]);
+  } catch (error) {
+    if (error.code === 1) throw new Error("Checkpoint belongs to a different source commit; contract sources changed. Preserve it for owner review.");
+    throw new Error("Could not verify checkpoint contract sources; preserve it for owner review.");
+  }
+}
+function checkpointCommitFor(restored, deployment, resumeCommit) {
+  return deployment?.commit || restored?.checkpoint_commit || restored?.source_commit || restored?.resume_commit || resumeCommit;
+}
 async function write(root, path, data) {
   const target = resolve(root, path);
   await mkdir(resolve(target, ".."), { recursive: true });
@@ -94,12 +106,18 @@ export async function checkPreconditions(root = projectRoot, env = process.env, 
   const restored = await load(actionsPath(root, "restored-status.json"), null);
   const deployment = await load(resolve(root, ".live-evidence/v7-deployment-state.json"), null);
   const demo = await load(resolve(root, "deploy/demo-state.json"), null);
-  if ((restored?.source_commit && restored.source_commit !== commit) || (deployment?.commit && deployment.commit !== commit)) throw new Error("Checkpoint belongs to a different source commit; preserve it for owner review.");
-  const release = await selectRelease(root, commit);
+  const checkpointCommit = checkpointCommitFor(restored, deployment, commit);
+  const checkpointCommits = new Set([restored?.source_commit, restored?.checkpoint_commit, restored?.resume_commit, deployment?.commit].filter(Boolean));
+  for (const sourceCommit of checkpointCommits) {
+    if (typeof sourceCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(sourceCommit)) throw new Error("Checkpoint contains an invalid source commit; preserve it for owner review.");
+    await assertCheckpointContractsUnchanged(root, sourceCommit, commit);
+  }
+  const releaseCommit = deployment?.commit || checkpointCommit;
+  const release = await selectRelease(root, releaseCommit);
   if (release && (release.record.constructor_args?.commitSeconds !== timing.commitSeconds || release.record.constructor_args?.revealSeconds !== timing.revealSeconds)) throw new Error("Restored release timing differs from the reviewed CI timing.");
   if (demo && (!release || demo.deployment_artifact !== release.path)) throw new Error("Demo checkpoint belongs to another deployment record.");
   console.log("CHECKED: branch, pushed HEAD, secrets, timing and restored-state identity.");
-  return { commit, release, deployment, demo };
+  return { commit, checkpoint_commit: checkpointCommit, resume_commit: commit, release, deployment, demo };
 }
 
 async function command(root, binary, args, options = {}) {
@@ -118,6 +136,7 @@ export async function executeLive(mode, root = projectRoot) {
   let release = checked.release;
   if (!release) {
     if (mode === "resume" && !checked.deployment) throw new Error("No saved deployment exists. Run check, then deploy, to start a new release.");
+    if (mode === "resume") throw new Error("The saved deployment record could not be matched; refusing to redeploy during resume.");
     const code = await command(root, process.execPath, ["scripts/deploy-loophole.mjs", "studionet"]);
     if (code !== 0) return code;
     release = await selectRelease(root, checked.commit);
@@ -144,13 +163,15 @@ async function proof(root) {
   return verified;
 }
 
-export function summarize(demo, code, proofVerified, mode) {
+export function summarize(demo, code, proofVerified, mode, commits = {}) {
   const counts = {};
   for (const step of Object.values(demo?.steps || {})) counts[step.status] = (counts[step.status] || 0) + 1;
   return {
     result: mode === "check" && code === 0 ? "CHECKED" : code === 0 && proofVerified ? "COMPLETED" : [3, 75].includes(code) ? "RESUMABLE" : "STOPPED",
     exit_code: code, mode, completed_stages: demo?.completed_stages || [],
     current_game: demo?.current_game || null, step_counts: counts,
+    checkpoint_commit: commits.checkpoint_commit || null,
+    resume_commit: commits.resume_commit || null,
     stopped: demo?.stopped || null, paused: demo?.paused || null, proof_verified: proofVerified,
   };
 }
@@ -158,7 +179,18 @@ export function summarize(demo, code, proofVerified, mode) {
 async function statusFor(root, mode, code, env = process.env) {
   const demo = await load(resolve(root, "deploy/demo-state.json"), null);
   const verified = await readFile(actionsPath(root, "proof-verified"), "utf8").then(() => true).catch(() => false);
-  return { ...summarize(demo, code, verified, mode), source_commit: await git(root, ["rev-parse", "HEAD"]), run_id: env.GITHUB_RUN_ID || "local", at: new Date().toISOString() };
+  const resumeCommit = await git(root, ["rev-parse", "HEAD"]);
+  const restored = await load(actionsPath(root, "restored-status.json"), null);
+  const deployment = await load(resolve(root, ".live-evidence/v7-deployment-state.json"), null);
+  const checkpointCommit = checkpointCommitFor(restored, deployment, resumeCommit);
+  return {
+    ...summarize(demo, code, verified, mode, { checkpoint_commit: checkpointCommit, resume_commit: resumeCommit }),
+    source_commit: resumeCommit,
+    checkpoint_commit: checkpointCommit,
+    resume_commit: resumeCommit,
+    run_id: env.GITHUB_RUN_ID || "local",
+    at: new Date().toISOString(),
+  };
 }
 
 async function gitInput(root, args, input, env) {
@@ -175,7 +207,8 @@ async function gitInput(root, args, input, env) {
 
 export async function persistState(root, mode, code, env = process.env) {
   const status = await statusFor(root, mode, code, env);
-  const release = await selectRelease(root, status.source_commit);
+  const deployment = await load(resolve(root, ".live-evidence/v7-deployment-state.json"), null);
+  const release = await selectRelease(root, deployment?.commit || status.checkpoint_commit || status.source_commit);
   status.release_record = release ? basename(release.path) : null;
   const files = new Map([["live-state/status.json", `${JSON.stringify(status, null, 2)}\n`]]);
   for (const [source, target] of [
@@ -228,7 +261,7 @@ async function main() {
   if (action === "persist") return persistState(projectRoot, mode, Number(code));
   if (action === "summary") {
     const status = await statusFor(projectRoot, mode, Number(code));
-    const text = `## live-release: ${status.result}\n\nCompleted stages: ${status.completed_stages.join(", ") || "none"}\n\nCurrent round/phase: ${status.current_game ? `${status.current_game.round_number} / ${status.current_game.phase}` : "not reached"}\n\nStep counts: ${JSON.stringify(status.step_counts)}\n\nStop: ${status.stopped?.message || status.paused?.location || (status.result === "STOPPED" ? "See setup, deployment or proof logs." : "none")}\n\nProof verified: ${status.proof_verified}\n`;
+    const text = `## live-release: ${status.result}\n\nCheckpoint commit: ${status.checkpoint_commit}\n\nResume commit: ${status.resume_commit}\n\nCompleted stages: ${status.completed_stages.join(", ") || "none"}\n\nCurrent round/phase: ${status.current_game ? `${status.current_game.round_number} / ${status.current_game.phase}` : "not reached"}\n\nStep counts: ${JSON.stringify(status.step_counts)}\n\nStop: ${status.stopped?.message || status.paused?.location || (status.result === "STOPPED" ? "See setup, deployment or proof logs." : "none")}\n\nProof verified: ${status.proof_verified}\n`;
     if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, text, { flag: "a" });
     else console.log(text);
     return;
