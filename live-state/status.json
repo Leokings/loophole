@@ -1,6 +1,6 @@
 {
   "result": "STOPPED",
-  "exit_code": 2,
+  "exit_code": 1,
   "mode": "resume",
   "completed_stages": [
     "claims",
@@ -27,8 +27,8 @@
   },
   "paused": null,
   "proof_verified": false,
-  "source_commit": "8c085efd52a95891f5463b1bf3fd1dcd21c2373d",
-  "run_id": "39164345888",
-  "at": "2026-10-18T22:01:17.367Z",
-  "release_record": "studionet-2026-10-18T18-09-40.367Z.json"
+  "source_commit": "a7381e521d23289ab4658aae10d4a52fff032519",
+  "run_id": "39215911174",
+  "at": "2026-10-19T07:26:07.939Z",
+  "release_record": null
 }
