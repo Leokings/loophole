@@ -31,6 +31,14 @@ async function assertCheckpointContractsUnchanged(root, checkpointCommit, resume
 function checkpointCommitFor(restored, deployment, resumeCommit) {
   return deployment?.commit || restored?.checkpoint_commit || restored?.source_commit || restored?.resume_commit || resumeCommit;
 }
+function releaseMatchesDeployment(record, deployment) {
+  if (record?.version !== 1 || record.network !== "studionet" || record.commit !== deployment?.commit) return false;
+  return ["republic", "caseLaw", "court"].every((name) => {
+    const releaseAddress = record.contracts?.[name]?.address;
+    const deployedAddress = deployment.contracts?.[name]?.address;
+    return typeof releaseAddress === "string" && typeof deployedAddress === "string" && releaseAddress.toLowerCase() === deployedAddress.toLowerCase();
+  });
+}
 async function write(root, path, data) {
   const target = resolve(root, path);
   await mkdir(resolve(target, ".."), { recursive: true });
@@ -79,7 +87,25 @@ export async function restoreState(root = projectRoot) {
     const status = JSON.parse(await git(root, ["show", `${ref}:live-state/status.json`]));
     if (status.release_record) {
       if (!releaseName.test(status.release_record)) throw new Error("Invalid checkpoint release filename.");
-      mapping[`live-state/${status.release_record}`] = `deployments/${status.release_record}`;
+      if (names.has(`live-state/${status.release_record}`)) mapping[`live-state/${status.release_record}`] = `deployments/${status.release_record}`;
+    }
+    if (!status.release_record || !names.has(`live-state/${status.release_record}`)) {
+      const deployment = names.has("live-state/deploy-state.json")
+        ? JSON.parse(await git(root, ["show", `${ref}:live-state/deploy-state.json`]))
+        : null;
+      if (deployment?.commit) {
+        const candidates = [];
+        for (const source of names) {
+          if (!source.startsWith("live-state/") || !releaseName.test(source.slice("live-state/".length))) continue;
+          const record = JSON.parse(await git(root, ["show", `${ref}:${source}`]));
+          if (releaseMatchesDeployment(record, deployment)) candidates.push(source);
+        }
+        if (candidates.length > 1) throw new Error("Multiple saved V7 releases match the checkpoint deployment; preserve it for owner review.");
+        if (candidates.length === 1) {
+          const filename = candidates[0].slice("live-state/".length);
+          mapping[candidates[0]] = `deployments/${filename}`;
+        }
+      }
     }
   }
   for (const [source, destination] of Object.entries(mapping)) if (names.has(source)) {

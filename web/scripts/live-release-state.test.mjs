@@ -37,7 +37,17 @@ async function repository() {
   await mkdir(join(root, "deployments"));
   return { folder, root, remote, commit };
 }
-const release = (commit) => ({ version: 1, network: "studionet", commit, contracts: { republic: {}, court: {}, caseLaw: {} }, constructor_args: { commitSeconds: 1200, revealSeconds: 600 } });
+const release = (commit) => ({
+  version: 1,
+  network: "studionet",
+  commit,
+  contracts: {
+    republic: { address: "0x0000000000000000000000000000000000000001" },
+    caseLaw: { address: "0x0000000000000000000000000000000000000002" },
+    court: { address: "0x0000000000000000000000000000000000000003" },
+  },
+  constructor_args: { commitSeconds: 1200, revealSeconds: 600 },
+});
 
 describe("GitHub live-release checkpoints", () => {
   it("permits only untracked release records in CI; code changes still fail the clean-tree gate", () => {
@@ -90,6 +100,42 @@ describe("GitHub live-release checkpoints", () => {
       expect(await git(root, ["rev-parse", `${after}^`])).toBe(before);
     } finally { await rm(folder, { recursive: true, force: true }); }
   }, 15_000);
+
+  it("restores the matching release artifact when an earlier checkpoint omitted its filename", async () => {
+    const { folder, root, remote, commit } = await repository();
+    try {
+      const env = keys();
+      const recordName = "studionet-checkpoint.json";
+      const savedRelease = release(commit);
+      await writeFile(join(root, "deployments", recordName), JSON.stringify(savedRelease));
+      await mkdir(join(root, "deploy"), { recursive: true });
+      await writeFile(join(root, "deploy", "demo-state.json"), JSON.stringify({ deployment_artifact: `deployments/${recordName}`, completed_stages: ["r1"], steps: {} }));
+      await mkdir(join(root, ".live-evidence/actions"), { recursive: true });
+      await writeFile(join(root, ".live-evidence/v7-deployment-state.json"), JSON.stringify({ commit, contracts: savedRelease.contracts, transactions: {} }));
+      await persistState(root, "resume", 75, env);
+
+      const editor = join(folder, "editor");
+      await git(folder, ["clone", remote, editor]);
+      await git(editor, ["checkout", "-b", "live-state", "origin/live-state"]);
+      await git(editor, ["config", "user.name", "Checkpoint test"]);
+      await git(editor, ["config", "user.email", "tests@example.invalid"]);
+      const statusPath = join(editor, "live-state", "status.json");
+      const status = JSON.parse(await readFile(statusPath, "utf8"));
+      status.release_record = null; // Simulate the earlier runner's lost filename while retaining its artifact.
+      await writeFile(statusPath, `${JSON.stringify(status, null, 2)}\n`);
+      await git(editor, ["add", "live-state/status.json"]);
+      await git(editor, ["commit", "-m", "checkpoint without release filename"]);
+      await git(editor, ["push", "origin", "live-state"]);
+
+      await rm(join(root, "deployments", recordName), { force: true });
+      await rm(join(root, ".live-evidence", "v7-deployment-state.json"), { force: true });
+      await rm(join(root, "deploy", "demo-state.json"), { force: true });
+      await restoreState(root);
+      const checked = await checkPreconditions(root, env, false);
+      expect(checked.release).toMatchObject({ path: `deployments/${recordName}`, record: { commit } });
+      expect(checked.demo.deployment_artifact).toBe(`deployments/${recordName}`);
+    } finally { await rm(folder, { recursive: true, force: true }); }
+  }, 20_000);
 
   it("allows runner-only commits while preserving the checkpoint deployment", async () => {
     const { folder, root, commit } = await repository();
