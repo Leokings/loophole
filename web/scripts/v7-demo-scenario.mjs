@@ -43,6 +43,33 @@ function parseJson(value, label) {
   return value;
 }
 
+function decodeRecoveryEffects(returnValue) {
+  let envelope = returnValue;
+  if (typeof envelope === "string") {
+    try { envelope = JSON.parse(envelope); } catch { /* readable GenVM output may not be strict JSON */ }
+  }
+  const payload = envelope && typeof envelope === "object" && "payload" in envelope
+    ? envelope.payload
+    : envelope;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    if (typeof payload.holding_reemitted === "boolean" && typeof payload.outcome_reemitted === "boolean") {
+      return {
+        holding_reemitted: payload.holding_reemitted,
+        outcome_reemitted: payload.outcome_reemitted,
+      };
+    }
+    if (typeof payload.readable === "string") return decodeRecoveryEffects(payload.readable);
+  }
+  if (typeof payload === "string") {
+    const holding = payload.match(/"holding_reemitted"\s*:\s*(true|false)\b/i)?.[1];
+    const outcome = payload.match(/"outcome_reemitted"\s*:\s*(true|false)\b/i)?.[1];
+    if (holding !== undefined && outcome !== undefined) {
+      return { holding_reemitted: holding.toLowerCase() === "true", outcome_reemitted: outcome.toLowerCase() === "true" };
+    }
+  }
+  return null;
+}
+
 async function read(ctx, contract, method, args = [], wallet = "A") {
   if (typeof ctx.read !== "function") throw new Error("Scenario context is missing read().");
   const result = await ctx.read({ contract, method, args, wallet });
@@ -721,18 +748,9 @@ export async function guards(ctx) {
   await finalizedStep(ctx, step("guard:record-holding", "Reject an EOA holding record", "A", "caseLaw", "record_holding", ["1|UNDERMINE|OTHER_FACTION", 1, "UNDERMINE", "OTHER_FACTION", "NOT_COVERED", "A valid-looking quoted rule.", 1, "0000000000000000000000000000000000000000000000000000000000000000"], { expected_failure: true, expected_error_code: "COURT_ONLY" }));
   const recovery = await finalizedStep(ctx, step("guard:recover-effects", "Replay delivered case effects", "A", "court", "recover_case_effects", [Number(stateFor(ctx).case_ids.A)], { case_name: "A" }));
   const rawReturnValue = recovery?.return_value;
-  let effects = null;
-  let returnValueDecoded = false;
-  if (rawReturnValue !== undefined && rawReturnValue !== null) {
-    try {
-      effects = parseJson(rawReturnValue, "recover_case_effects");
-      returnValueDecoded = true;
-    } catch {
-      // Some GenVM versions encode the leader return value. Read-backs below
-      // remain the authoritative replay guard when it cannot be decoded.
-    }
-  }
-  if (returnValueDecoded && (!effects || effects.holding_reemitted !== false || effects.outcome_reemitted !== false)) {
+  const effects = rawReturnValue === undefined || rawReturnValue === null ? null : decodeRecoveryEffects(rawReturnValue);
+  const returnValueDecoded = effects !== null;
+  if (returnValueDecoded && (effects.holding_reemitted !== false || effects.outcome_reemitted !== false)) {
     throw new ScenarioStopError("Case A recovery did not report both effect flags as false.");
   }
   const after = await republicGuardSnapshot(ctx);

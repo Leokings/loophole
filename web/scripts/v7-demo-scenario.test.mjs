@@ -185,6 +185,45 @@ describe("V7 code-defined live demo scenario", () => {
     });
   });
 
+  it("decodes GenVM's readable recovery envelope with adjacent boolean flags", async () => {
+    const holding = { key: "A-key", label: "NOT_COVERED", quote: "A quoted rule." };
+    const returnValue = {
+      raw: "encoded return",
+      status: "return",
+      payload: {
+        raw: "encoded payload",
+        readable: '{"holding_reemitted":false"outcome_reemitted":false}',
+      },
+    };
+    const ctx = {
+      state: {
+        ...baseState(),
+        law_ids: { vague: 2, rule: 1 },
+        case_ids: { A: 1 },
+        case_keys: { A: "A-key" },
+      },
+      read: async ({ contract, method }) => {
+        if (contract === "caseLaw" && method === "get_holding") return holding;
+        if (method === "get_game") return { case_outcome_count: 4, active_crisis_id: 0 };
+        if (method === "get_public_snapshot") return { factions: FACTIONS.map((faction) => ({ faction_id: faction, legitimacy: 7 })) };
+        return {};
+      },
+      executeStep: async (step) => ({
+        ...step,
+        status: "FINALIZED_SUCCESS",
+        return_value: step.method === "recover_case_effects" ? returnValue : null,
+      }),
+      saveState: async () => {},
+    };
+    await expect(guards(ctx)).resolves.toBeUndefined();
+    expect(ctx.state.guard_checks).toMatchObject({
+      recovery: { holding_reemitted: false, outcome_reemitted: false },
+      return_value: returnValue,
+      return_value_decoded: true,
+      unchanged: true,
+    });
+  });
+
   it("stops on the injection case returning an unexpected label", async () => {
     const ctx = {
       state: { ...baseState(), case_ids: { C: 3 }, case_keys: { C: "2|GROW_WEALTH|NONE" } },
