@@ -1,6 +1,6 @@
 {
   "result": "STOPPED",
-  "exit_code": 1,
+  "exit_code": 0,
   "mode": "resume",
   "completed_stages": [
     "claims",
@@ -9,28 +9,27 @@
     "r3",
     "r4",
     "r5",
-    "r6"
+    "r6",
+    "r7",
+    "r8",
+    "r9",
+    "r10_fallback"
   ],
   "current_game": {
-    "round_number": 7,
-    "phase": "READY_TO_ADVANCE"
+    "round_number": 10,
+    "phase": "COMMIT"
   },
   "step_counts": {
-    "FINALIZED_SUCCESS": 18,
-    "ACCEPTED_PENDING_FINALITY": 68,
-    "FINALIZED_EXPECTED_FAILURE": 4
+    "FINALIZED_SUCCESS": 114,
+    "FINALIZED_EXPECTED_FAILURE": 5
   },
   "checkpoint_commit": "8c085efd52a95891f5463b1bf3fd1dcd21c2373d",
-  "resume_commit": "8fd0ead3341fda6cecddecdfb1c835c3b8914d08",
-  "stopped": {
-    "stage": "r7",
-    "message": "Case A recovery did not report both effect flags as false.",
-    "exit_code": 2
-  },
+  "resume_commit": "c1e6f191aca8cda5f7a9ff4047cd784fcbb82e7f",
+  "stopped": null,
   "paused": null,
   "proof_verified": false,
-  "source_commit": "8fd0ead3341fda6cecddecdfb1c835c3b8914d08",
-  "run_id": "39219429093",
-  "at": "2026-10-19T07:58:17.149Z",
-  "release_record": null
+  "source_commit": "c1e6f191aca8cda5f7a9ff4047cd784fcbb82e7f",
+  "run_id": "39221192010",
+  "at": "2026-10-19T12:45:54.569Z",
+  "release_record": "studionet-2026-10-18T18-09-40.367Z.json"
 }

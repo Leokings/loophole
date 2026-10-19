@@ -1,0 +1,5 @@
+CHECKED: branch, pushed HEAD, secrets, timing and restored-state identity.
+RPC temporarily unavailable; retry 1/6 in 15 seconds.
+Recorded 119 scenario transactions; all records are finalized.
+Wrote deploy/proof.json and byte-identical web/public/proof.json.
+Transaction 0xc6d33e2379086a36ca80d1e385120309ee52aaf2f7fd514063ffc31657b5e17a is not a deployment.
