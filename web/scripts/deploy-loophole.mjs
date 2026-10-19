@@ -1,342 +1,194 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
-import { createAccount, generatePrivateKey } from "genlayer-js";
+import { createAccount } from "genlayer-js";
 import { CalldataAddress } from "genlayer-js/types";
-
 import {
-  asRecord,
-  assertChain,
-  assertSchema,
-  clientFor,
-  deployedAddress,
-  endpointFor,
-  expectedMethods,
-  projectRoot,
-  readSource,
-  requireStage,
-  retryPropagation,
-  sha256,
-  verifySourceAndSchema,
-  waitForFinalized,
+  assertSchema, assertSuccessfulReceipt, clientFor, deployedAddress, endpointFor,
+  projectRoot, requireStage, sha256,
 } from "./deployment-shared.mjs";
+import { releaseTimings } from "./v7-release-guards.mjs";
+import { exitCodeFor, installRpcRetries } from "./v7-runner-runtime.mjs";
 
-const PRIVATE_KEY_PATTERN = /^0x[a-fA-F0-9]{64}$/;
-const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
-const TRANSACTION_HASH_PATTERN = /^0x[a-fA-F0-9]{64}$/;
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const execFile = promisify(execFileCallback);
+const statePath = resolve(projectRoot, ".live-evidence/v7-deployment-state.json");
+const EXPECTED = {
+  republic: ["open_crisis", "judge_crisis_response", "close_crisis", "get_game", "get_public_snapshot", "get_keeper_status", "get_storage_stats", "certify_law", "get_factions_json", "get_faction", "get_controlled_faction", "is_active_faction_controller", "preview_action_commitment", "get_round_action", "get_round_summary", "get_law", "get_office", "get_offices_json", "get_objective", "get_crisis", "get_season_summary", "preview_objective_commitment", "commit_objective", "reveal_objective", "finalize_season", "get_case_outcome", "is_court_action_sanctioned", "set_links", "apply_case_outcome", "claim_faction", "release_faction", "recover_abandoned_faction", "commit_action", "reveal_action", "advance_round_fallback", "advance_round"],
+  caseLaw: ["set_court", "record_holding", "get_holding", "get_holding_for_case", "get_holdings_for_laws", "get_registry_summary"],
+  court: ["file_case", "file_case_from_republic", "submit_brief", "resolve_case", "expire_case", "resolve_stayed_case", "recover_case_effects", "get_keeper_status", "get_case", "get_docket", "get_open_case_ids", "get_court", "get_storage_stats"],
+  probe: ["write_probe", "read_probe"],
+};
+const contractSources = {
+  republic: "contracts/AutonomousRepublic.py",
+  caseLaw: "contracts/CaseLaw.py",
+  court: "contracts/RepublicCourt.py",
+  probe: "contracts/probe/Probe.py",
+};
 
-function integerSetting(name, fallback, minimum, maximum) {
-  const raw = process.env[name];
-  const value = raw === undefined || raw === "" ? fallback : Number(raw);
-  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
-    throw new Error(`${name} must be an integer from ${minimum} through ${maximum}`);
-  }
-  return value;
-}
-
-function deploymentAddress(value, label) {
-  const address = String(value || "").trim();
-  if (!ADDRESS_PATTERN.test(address)) throw new Error(`${label} is not a GenLayer address`);
-  return address;
-}
-
-function sameAddress(left, right) {
-  return String(left).toLowerCase() === String(right).toLowerCase();
-}
-
-function contractAddressArgument(value, label) {
-  const address = deploymentAddress(value, label);
-  const pairs = address.slice(2).match(/.{2}/g);
-  if (!pairs || pairs.length !== 20) throw new Error(`${label} could not be encoded`);
+function addressArgument(value) {
+  const pairs = String(value).slice(2).match(/.{2}/g);
+  if (!/^0x[a-fA-F0-9]{40}$/.test(String(value)) || !pairs) throw new Error("Invalid contract address in saved deployment state");
   return new CalldataAddress(Uint8Array.from(pairs, (pair) => Number.parseInt(pair, 16)));
 }
 
-function resumedDeployment(addressName, transactionName, label) {
-  const rawAddress = String(process.env[addressName] || "").trim();
-  const transactionHash = String(process.env[transactionName] || "").trim().toLowerCase();
-  if (!rawAddress && !transactionHash) return undefined;
-  if (!rawAddress || !transactionHash) {
-    throw new Error(`${addressName} and ${transactionName} must be set together`);
-  }
-  const address = deploymentAddress(rawAddress, addressName);
-  if (!TRANSACTION_HASH_PATTERN.test(transactionHash)) {
-    throw new Error(`${transactionName} is not a transaction hash`);
-  }
-  console.log(`Resuming verified ${label} deployment ${transactionHash} at ${address}.`);
-  return { address, transactionHash };
+export function dirtyReleasePaths(dirty, inActions = process.env.GITHUB_ACTIONS === "true") {
+  return dirty.split(/\r?\n/).filter(Boolean).filter((line) => !(
+    inActions && /^\?\? deployments\/studionet-[\w.-]+\.json$/.test(line)
+  ));
 }
 
-async function verifyResumedReceipt(client, resumed, label) {
-  const receipt = await waitForFinalized(client, resumed.transactionHash, `${label} deployment`);
-  const receiptAddress = deployedAddress(receipt, label);
-  if (!sameAddress(receiptAddress, resumed.address)) {
-    throw new Error(`${label} resume address does not match its deployment receipt`);
+export async function assertReleaseBranch() {
+  const { stdout: branch } = await execFile("git", ["branch", "--show-current"], { cwd: projectRoot });
+  if (branch.trim() !== "v7") throw new Error("Release build requires the v7 branch.");
+  const { stdout: dirty } = await execFile("git", ["status", "--porcelain"], { cwd: projectRoot });
+  if (dirtyReleasePaths(dirty).length) throw new Error("Release deployment requires a clean working tree.");
+  const { stdout: remotes } = await execFile("git", ["branch", "-r", "--contains", "HEAD"], { cwd: projectRoot });
+  if (!remotes.trim()) throw new Error("Push v7 before any live deployment; HEAD is not on a remote branch.");
+}
+
+async function loadState(commit) {
+  try {
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    if (state.commit !== commit) throw new Error("Saved release state belongs to a different commit; archive it before starting a new release.");
+    return state;
+  } catch (cause) {
+    if (cause?.code !== "ENOENT") throw cause;
+    return { commit, created_at: new Date().toISOString(), transactions: {}, contracts: {} };
   }
+}
+
+async function saveState(state) {
+  await mkdir(resolve(projectRoot, ".live-evidence"), { recursive: true });
+  const temporary = `${statePath}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await rename(temporary, statePath);
+}
+
+async function waitForFinalized(client, txHash, label) {
+  const receipt = await client.waitForTransactionReceipt({ fullTransaction: true, hash: txHash,
+    interval: 10_000, retries: 1_080, status: "FINALIZED" });
+  assertSuccessfulReceipt(receipt, label);
+  return receipt;
+}
+
+async function transaction(state, id, submit, client, label, deployedName) {
+  const record = state.transactions[id] ?? { status: "NOT_SUBMITTED" };
+  if (!record.tx_hash) {
+    const txHash = String(await submit());
+    state.transactions[id] = { ...record, tx_hash: txHash, status: "SUBMITTED" };
+    await saveState(state); // Persist before waiting for finality.
+  }
+  const receipt = await waitForFinalized(client, state.transactions[id].tx_hash, label);
+  state.transactions[id].status = "FINALIZED_SUCCESS";
+  state.transactions[id].execution_result = "SUCCESS";
+  state.transactions[id].consensus_result = "AGREE";
+  if (deployedName) {
+    const address = state.contracts[deployedName]?.address || deployedAddress(receipt, label);
+    state.contracts[deployedName] = { ...state.contracts[deployedName], address };
+  }
+  await saveState(state);
   return receipt;
 }
 
 async function main() {
-  const stage = requireStage(process.argv[2] || process.env.LOOPHOLE_DEPLOY_STAGE);
+  if (process.argv[2] !== "studionet") throw new Error("Usage: npm run deploy:studionet (StudioNet only)");
+  await assertReleaseBranch();
+  const timing = releaseTimings();
+  const stage = requireStage("studionet");
   const endpoint = endpointFor(stage);
-  const ephemeralStudio = process.env.LOOPHOLE_EPHEMERAL_STUDIONET === "1";
-  if (ephemeralStudio && stage.key !== "studionet") {
-    throw new Error("LOOPHOLE_EPHEMERAL_STUDIONET is allowed only for studionet");
-  }
-  if (ephemeralStudio && process.env.GENLAYER_DEPLOYER_ADDRESS) {
-    throw new Error("Do not set GENLAYER_DEPLOYER_ADDRESS for an ephemeral StudioNet deployment");
-  }
-  const privateKey = ephemeralStudio
-    ? generatePrivateKey()
-    : String(process.env.GENLAYER_DEPLOYER_PRIVATE_KEY || "").trim();
-  if (!PRIVATE_KEY_PATTERN.test(privateKey)) {
-    throw new Error("GENLAYER_DEPLOYER_PRIVATE_KEY must be a 32-byte hex private key");
-  }
-
+  installRpcRetries(endpoint);
+  const privateKey = String(process.env.GENLAYER_DEPLOYER_PRIVATE_KEY || "");
+  if (!/^0x[a-fA-F0-9]{64}$/.test(privateKey)) throw new Error("Set a dedicated GENLAYER_DEPLOYER_PRIVATE_KEY in web/.env.local.");
   const account = createAccount(privateKey);
-  const expectedDeployer = process.env.GENLAYER_DEPLOYER_ADDRESS?.trim().toLowerCase();
-  if (expectedDeployer && account.address.toLowerCase() !== expectedDeployer) {
-    throw new Error("GENLAYER_DEPLOYER_ADDRESS does not match GENLAYER_DEPLOYER_PRIVATE_KEY");
+  if (process.env.GENLAYER_KEEPER_PRIVATE_KEY && process.env.GENLAYER_KEEPER_PRIVATE_KEY === privateKey) {
+    throw new Error("The deployer key must be separate from the keeper key.");
   }
-
+  const { stdout: commit } = await execFile("git", ["rev-parse", "HEAD"], { cwd: projectRoot });
+  const state = await loadState(commit.trim());
+  const sources = Object.fromEntries(await Promise.all(Object.entries(contractSources).map(async ([name, path]) => {
+    const bytes = await readFile(resolve(projectRoot, path));
+    if (bytes.includes(13)) throw new Error(`${path} contains CR bytes; normalize line endings before release.`);
+    return [name, bytes.toString("utf8")];
+  })));
+  const runnerHeaders = Object.values(sources).map((source) => source.split("\n", 1)[0]);
+  if (new Set(runnerHeaders).size !== 1) throw new Error("All four release sources must carry the identical GenLayer dependency header.");
+  const runnerHeader = runnerHeaders[0];
+  let runnerDepends;
+  try { runnerDepends = JSON.parse(runnerHeader.slice(2)).Depends; } catch { runnerDepends = undefined; }
+  if (typeof runnerDepends !== "string" || !runnerDepends.startsWith("py-genlayer:")) {
+    throw new Error("The contract header must declare a pinned py-genlayer dependency.");
+  }
+  const factions = JSON.parse(await readFile(resolve(projectRoot, "examples/factions.json"), "utf8"));
+  if (!Array.isArray(factions) || factions.length < 3 || factions.length > 8) throw new Error("Faction configuration must contain 3–8 factions.");
+  const republicId = String(process.env.LOOPHOLE_REPUBLIC_ID || "FIRST-REPUBLIC");
   const client = clientFor(stage, account, endpoint);
-  await assertChain(client, stage);
-  if (ephemeralStudio) {
-    console.log("Using an in-memory StudioNet deployer; its private key will not be persisted.");
+  if (await client.getChainId() !== stage.chainId) throw new Error("The RPC chain does not match StudioNet.");
+  for (const [name, source] of Object.entries(sources)) {
+    assertSchema(await client.getContractSchemaForCode(source), EXPECTED[name], `${name} schema preflight`);
   }
 
-  const [republicSource, courtSource, factionsSource] = await Promise.all([
-    readSource("contracts/AutonomousRepublic.py"),
-    readSource("contracts/RepublicCourt.py"),
-    readFile(resolve(projectRoot, "examples/factions.json"), "utf8"),
-  ]);
-  const factions = JSON.parse(factionsSource);
-  if (!Array.isArray(factions) || factions.length < 3 || factions.length > 8) {
-    throw new Error("examples/factions.json must contain three through eight factions");
+  await transaction(state, "probe.deploy", () => client.deployContract({ account, args: [], code: sources.probe }), client, "runner probe", "probe");
+  const probeAddress = state.contracts.probe.address;
+  if (!probeAddress) throw new Error("Runner probe deployment receipt omitted its contract address.");
+  const deployedProbeSource = await client.getContractCode(probeAddress);
+  if (deployedProbeSource !== sources.probe) throw new Error("Runner probe source differs byte-for-byte from this commit.");
+  const beforeProbe = await client.readContract({ address: probeAddress, functionName: "read_probe", jsonSafeReturn: true });
+  if (!state.transactions["probe.write"]?.tx_hash && beforeProbe !== "") throw new Error("Probe started with unexpected state.");
+  if (!state.transactions["probe.write"]?.tx_hash) {
+    await transaction(state, "probe.write", () => client.writeContract({ account, address: probeAddress,
+      args: ["loophole-v7-probe"], functionName: "write_probe", value: 0n }), client, "runner probe write");
+  } else {
+    await transaction(state, "probe.write", () => state.transactions["probe.write"].tx_hash, client, "runner probe write");
+  }
+  if (await client.readContract({ address: probeAddress, functionName: "read_probe", jsonSafeReturn: true }) !== "loophole-v7-probe") {
+    throw new Error("Runner probe readback did not match the finalized write.");
   }
 
-  const settings = {
-    appealSeconds: integerSetting("LOOPHOLE_APPEAL_SECONDS", 86_400, 60, 604_800),
-    briefSeconds: integerSetting("LOOPHOLE_BRIEF_SECONDS", 86_400, 60, 604_800),
-    commitSeconds: integerSetting("LOOPHOLE_COMMIT_SECONDS", 86_400, 60, 604_800),
-    republicId: String(process.env.LOOPHOLE_REPUBLIC_ID || "FIRST-REPUBLIC").trim(),
-    revealSeconds: integerSetting("LOOPHOLE_REVEAL_SECONDS", 86_400, 60, 604_800),
-    seasonRounds: integerSetting("LOOPHOLE_SEASON_ROUNDS", 12, 8, 30),
+  await transaction(state, "republic.deploy", () => client.deployContract({ account, code: sources.republic,
+    args: [republicId, JSON.stringify(factions), timing.commitSeconds, timing.revealSeconds, timing.seasonRounds,
+      timing.fallbackGraceSeconds, timing.judgmentWindowSeconds] }), client, "AutonomousRepublic", "republic");
+  const republic = state.contracts.republic.address;
+  await transaction(state, "caselaw.deploy", () => client.deployContract({ account, code: sources.caseLaw, args: [] }), client, "CaseLaw", "caseLaw");
+  const caseLaw = state.contracts.caseLaw.address;
+  await transaction(state, "court.deploy", () => client.deployContract({ account, code: sources.court,
+    args: [addressArgument(republic), addressArgument(caseLaw), timing.briefSeconds, timing.courtResolutionSeconds] }), client, "RepublicCourt", "court");
+  const court = state.contracts.court.address;
+  await transaction(state, "caselaw.set_court", () => client.writeContract({ account, address: caseLaw,
+    args: [addressArgument(court)], functionName: "set_court", value: 0n }), client, "CaseLaw court link");
+  await transaction(state, "republic.set_links", () => client.writeContract({ account, address: republic,
+    args: [addressArgument(court), addressArgument(caseLaw)], functionName: "set_links", value: 0n }), client, "Republic links");
+
+  const deployed = await Promise.all(Object.entries({ republic, caseLaw, court }).map(async ([name, address]) => {
+    const sourceKey = name === "caseLaw" ? "caseLaw" : name;
+    const transactionKey = name === "caseLaw" ? "caselaw.deploy" : `${name}.deploy`;
+    const actual = await client.getContractCode(address);
+    if (actual !== sources[sourceKey]) throw new Error(`${name} deployed source differs byte-for-byte from this commit.`);
+    assertSchema(await client.getContractSchema(address), EXPECTED[sourceKey], `${name} deployed schema`);
+    return [name, { address, source_sha256: sha256(actual), deploy_tx: state.transactions[transactionKey]?.tx_hash }];
+  }));
+  const proofTransactions = {
+    "probe.deploy": { ...state.transactions["probe.deploy"], contract: probeAddress, method: "deploy", args: [] },
+    "probe.write": { ...state.transactions["probe.write"], contract: probeAddress, method: "write_probe", args: ["loophole-v7-probe"] },
+    "caseLaw.set_court": { ...state.transactions["caselaw.set_court"], contract: caseLaw, method: "set_court", args: [court] },
+    "republic.set_links": { ...state.transactions["republic.set_links"], contract: republic, method: "set_links", args: [court, caseLaw] },
   };
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(settings.republicId)) {
-    throw new Error("LOOPHOLE_REPUBLIC_ID must be a canonical identifier of at most 64 characters");
-  }
-
-  const [republicSchema, courtSchema] = await Promise.all([
-    client.getContractSchemaForCode(republicSource),
-    client.getContractSchemaForCode(courtSource),
-  ]);
-  assertSchema(republicSchema, expectedMethods.republic, "AutonomousRepublic preflight");
-  assertSchema(courtSchema, expectedMethods.court, "RepublicCourt preflight");
-
-  console.log(`Deploying Loophole to ${stage.key} (${stage.chainId}) from ${account.address}...`);
-  const resumedRepublic = resumedDeployment(
-    "LOOPHOLE_RESUME_REPUBLIC_ADDRESS",
-    "LOOPHOLE_RESUME_REPUBLIC_TX_HASH",
-    "AutonomousRepublic",
-  );
-  let republicTxHash;
-  let republicAddress;
-  if (resumedRepublic) {
-    await verifyResumedReceipt(client, resumedRepublic, "AutonomousRepublic");
-    republicTxHash = resumedRepublic.transactionHash;
-    republicAddress = resumedRepublic.address;
-  } else {
-    republicTxHash = await client.deployContract({
-      account,
-      args: [
-        settings.republicId,
-        JSON.stringify(factions),
-        settings.commitSeconds,
-        settings.revealSeconds,
-        settings.seasonRounds,
-      ],
-      code: republicSource,
-    });
-    console.log(`AutonomousRepublic submitted: ${republicTxHash}`);
-    const republicReceipt = await waitForFinalized(client, republicTxHash, "AutonomousRepublic deployment");
-    republicAddress = deployedAddress(republicReceipt, "AutonomousRepublic");
-  }
-  const republicVerification = await verifySourceAndSchema(
-    client,
-    republicAddress,
-    republicSource,
-    expectedMethods.republic,
-    "AutonomousRepublic",
-  );
-  const initialGame = asRecord(await retryPropagation(
-    "AutonomousRepublic state",
-    () => client.readContract({
-      address: republicAddress,
-      functionName: "get_game",
-      jsonSafeReturn: true,
-    }),
-  ), "get_game after deployment");
-  if (initialGame.republic_id !== settings.republicId) {
-    throw new Error("AutonomousRepublic constructor state does not match this release");
-  }
-  if (
-    Number(initialGame.commit_seconds) !== settings.commitSeconds
-    || Number(initialGame.reveal_seconds) !== settings.revealSeconds
-    || Number(initialGame.season_rounds) !== settings.seasonRounds
-    || !sameAddress(deploymentAddress(initialGame.owner, "get_game.owner"), account.address)
-  ) {
-    throw new Error("AutonomousRepublic resumed state does not match this release configuration");
-  }
-  console.log(`AutonomousRepublic finalized: ${republicAddress}`);
-
-  const resumedCourt = resumedDeployment(
-    "LOOPHOLE_RESUME_COURT_ADDRESS",
-    "LOOPHOLE_RESUME_COURT_TX_HASH",
-    "RepublicCourt",
-  );
-  let courtTxHash;
-  let courtAddress;
-  if (resumedCourt) {
-    await verifyResumedReceipt(client, resumedCourt, "RepublicCourt");
-    courtTxHash = resumedCourt.transactionHash;
-    courtAddress = resumedCourt.address;
-  } else {
-    courtTxHash = await client.deployContract({
-      account,
-      args: [contractAddressArgument(republicAddress, "RepublicCourt republic address"), settings.briefSeconds, settings.appealSeconds],
-      code: courtSource,
-    });
-    console.log(`RepublicCourt submitted: ${courtTxHash}`);
-    const courtReceipt = await waitForFinalized(client, courtTxHash, "RepublicCourt deployment");
-    courtAddress = deployedAddress(courtReceipt, "RepublicCourt");
-  }
-  const courtVerification = await verifySourceAndSchema(
-    client,
-    courtAddress,
-    courtSource,
-    expectedMethods.court,
-    "RepublicCourt",
-  );
-  const initialCourt = asRecord(await retryPropagation(
-    "RepublicCourt state",
-    () => client.readContract({
-      address: courtAddress,
-      functionName: "get_court",
-      jsonSafeReturn: true,
-    }),
-  ), "get_court after deployment");
-  if (!sameAddress(deploymentAddress(initialCourt.republic_address, "get_court.republic_address"), republicAddress)) {
-    throw new Error("RepublicCourt constructor state points to the wrong republic");
-  }
-  if (
-    Number(initialCourt.brief_seconds) !== settings.briefSeconds
-    || Number(initialCourt.appeal_seconds) !== settings.appealSeconds
-    || !sameAddress(deploymentAddress(initialCourt.owner, "get_court.owner"), account.address)
-  ) {
-    throw new Error("RepublicCourt resumed state does not match this release configuration");
-  }
-  console.log(`RepublicCourt finalized: ${courtAddress}`);
-
-  const gameBeforeLink = asRecord(await retryPropagation(
-    "AutonomousRepublic link state",
-    () => client.readContract({ address: republicAddress, functionName: "get_game", jsonSafeReturn: true }),
-  ), "get_game before court link");
-  const configuredCourt = deploymentAddress(gameBeforeLink.court_address, "get_game.court_address");
-  let linkTxHash = null;
-  if (sameAddress(configuredCourt, ZERO_ADDRESS)) {
-    linkTxHash = await client.writeContract({
-      account,
-      address: republicAddress,
-      args: [contractAddressArgument(courtAddress, "AutonomousRepublic court address")],
-      functionName: "set_court_address",
-      value: 0n,
-    });
-    console.log(`Court link submitted: ${linkTxHash}`);
-    await waitForFinalized(client, linkTxHash, "Court link");
-  } else if (sameAddress(configuredCourt, courtAddress)) {
-    console.log("Court link is already finalized; skipping the one-time write.");
-  } else {
-    throw new Error(`AutonomousRepublic is already linked to a different court (${configuredCourt})`);
-  }
-
-  await retryPropagation("Court link", async () => {
-    const [gameValue, courtValue] = await Promise.all([
-      client.readContract({ address: republicAddress, functionName: "get_game", jsonSafeReturn: true }),
-      client.readContract({ address: courtAddress, functionName: "get_court", jsonSafeReturn: true }),
-    ]);
-    const nextGame = asRecord(gameValue, "get_game");
-    const nextCourt = asRecord(courtValue, "get_court");
-    if (!sameAddress(deploymentAddress(nextGame.court_address, "get_game.court_address"), courtAddress)) {
-      throw new Error("AutonomousRepublic is not linked to the deployed court");
-    }
-    if (!sameAddress(deploymentAddress(nextCourt.republic_address, "get_court.republic_address"), republicAddress)) {
-      throw new Error("RepublicCourt points to the wrong republic");
-    }
-    return true;
-  });
-
-  const createdAt = new Date().toISOString();
-  const artifact = {
-    schemaVersion: 1,
-    createdAt,
-    stage: stage.key,
-    network: stage.network,
-    chainId: stage.chainId,
-    rpcUrl: endpoint,
-    deployer: account.address.toLowerCase(),
-    republic: {
-      address: republicAddress,
-      constructor: {
-        republicId: settings.republicId,
-        factionIds: factions.map((faction) => faction.id),
-        commitSeconds: settings.commitSeconds,
-        revealSeconds: settings.revealSeconds,
-        seasonRounds: settings.seasonRounds,
-      },
-      sourceSha256: republicVerification.sourceSha256,
-      transactionHash: republicTxHash,
-    },
-    court: {
-      address: courtAddress,
-      constructor: {
-        appealSeconds: settings.appealSeconds,
-        briefSeconds: settings.briefSeconds,
-        republicAddress,
-      },
-      sourceSha256: courtVerification.sourceSha256,
-      transactionHash: courtTxHash,
-    },
-    linkTransactionHash: linkTxHash,
-    frontendEnvironment: {
-      NEXT_PUBLIC_COURT_ADDRESS: courtAddress,
-      NEXT_PUBLIC_GENLAYER_NETWORK: stage.network,
-      NEXT_PUBLIC_GENLAYER_RPC_URL: endpoint,
-      NEXT_PUBLIC_REPUBLIC_ADDRESS: republicAddress,
-    },
-    keeperEnvironment: {
-      LOOPHOLE_COURT_ADDRESSES: courtAddress,
-      LOOPHOLE_REPUBLIC_ADDRESSES: republicAddress,
-    },
-    repositorySourceSha256: sha256(republicSource + courtSource),
-  };
-
-  const deploymentDirectory = resolve(projectRoot, "deployments");
-  await mkdir(deploymentDirectory, { recursive: true });
-  const timestamp = createdAt.replaceAll(":", "-");
-  const artifactPath = resolve(deploymentDirectory, `${stage.artifactName}-${timestamp}.json`);
-  await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-
-  console.log(`Deployment verified and recorded at ${artifactPath}`);
-  console.log(`NEXT_PUBLIC_GENLAYER_NETWORK=${stage.network}`);
-  console.log(`NEXT_PUBLIC_GENLAYER_RPC_URL=${endpoint}`);
-  console.log(`NEXT_PUBLIC_REPUBLIC_ADDRESS=${republicAddress}`);
-  console.log(`NEXT_PUBLIC_COURT_ADDRESS=${courtAddress}`);
+  const record = { version: 1, network: "studionet", chain_id: stage.chainId, commit: commit.trim(), rpc_url: endpoint,
+    contracts: Object.fromEntries(deployed), runner: { depends: runnerDepends, header_sha256: sha256(runnerHeader),
+      probe_address: probeAddress, probe_source_sha256: sha256(deployedProbeSource),
+      probe_deploy_tx: state.transactions["probe.deploy"].tx_hash, probe_write_tx: state.transactions["probe.write"].tx_hash },
+    toolchain: { genlayer_js: "1.1.8", node: process.version }, constructor_args: { republic_id: republicId, faction_ids: factions.map((item) => item.id), ...timing },
+    transactions: { ...state.transactions, ...proofTransactions }, generated_at: new Date().toISOString() };
+  const outDir = resolve(projectRoot, "deployments"); await mkdir(outDir, { recursive: true });
+  const out = resolve(outDir, `studionet-${record.generated_at.replaceAll(":", "-")}.json`);
+  await writeFile(out, `${JSON.stringify(record, null, 2)}\n`, { flag: "wx" });
+  console.log(`Verified release record written to ${out}`);
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => { console.error(error instanceof Error ? error.message : "Release failed."); process.exitCode = exitCodeFor(error); });
+}

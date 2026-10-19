@@ -5,6 +5,7 @@ import {
   assertFinalizedTransaction,
   FinalizedTransactionFailure,
   shouldPreservePendingSecret,
+  transactionStageForStatus,
   TransactionFinalityUncertainError,
 } from "./transaction";
 
@@ -15,6 +16,13 @@ describe("transaction finality", () => {
       result_name: "MAJORITY_AGREE",
       statusName: TransactionStatus.FINALIZED,
     })).not.toThrow();
+  });
+
+  it("maps accepted transactions separately from transactions still processing", () => {
+    expect(transactionStageForStatus(TransactionStatus.PENDING)).toBe("pending");
+    expect(transactionStageForStatus(TransactionStatus.ACCEPTED)).toBe("accepted");
+    expect(transactionStageForStatus(TransactionStatus.APPEAL_REVEALING)).toBe("accepted");
+    expect(transactionStageForStatus(TransactionStatus.CANCELED)).toBe("finalized-error");
   });
 
   it("rejects a finalized transaction that consensus did not accept", () => {

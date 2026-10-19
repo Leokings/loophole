@@ -11,6 +11,8 @@ import { CourtPanel } from "@/components/court-panel";
 import { FactionRail } from "@/components/faction-rail";
 import { HeartbeatBadge } from "@/components/heartbeat-badge";
 import { PowerPanel } from "@/components/power-panel";
+import { ProofPanel } from "@/components/proof-panel";
+import { TransactionFeed } from "@/components/transaction-feed";
 import {
   connectWallet,
   courtAddress,
@@ -148,6 +150,7 @@ export function GameShell() {
               {item === "court" && (snapshot.court?.open_case_count ?? 0) > 0 ? <i>{snapshot.court?.open_case_count}</i> : null}
             </button>
           ))}
+          <Link href="/case-law">Case law</Link>
           <Link href="/how-to-play">How to play</Link>
         </nav>
         <div className="network-cluster">
@@ -166,6 +169,9 @@ export function GameShell() {
         <span>{snapshot.game.court_configured ? `Court ${isDemo ? "linked" : shortAddress(courtAddress)}` : "Court not linked"}</span>
         <button type="button" onClick={() => void refresh(true)} disabled={loading}>{loading ? "Reading…" : "Refresh accepted state"}</button>
       </div>
+
+      <TransactionFeed />
+      <ProofPanel />
 
       {error ? <div className="status-banner" role="status"><strong>Live refresh delayed.</strong> {error}</div> : null}
 

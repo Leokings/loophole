@@ -75,7 +75,7 @@ def main() -> None:
     args = parser.parse_args()
 
     linter = "from genvm_linter.cli import cli; cli()"
-    for contract in ("contracts/AutonomousRepublic.py", "contracts/RepublicCourt.py"):
+    for contract in ("contracts/AutonomousRepublic.py", "contracts/CaseLaw.py", "contracts/RepublicCourt.py"):
         run([sys.executable, "-X", "utf8", "-c", linter, "check", contract])
         run([sys.executable, "-X", "utf8", "-c", linter, "typecheck", contract])
     run([sys.executable, "-m", "pytest", "tests/direct", "-q"])

@@ -40,10 +40,7 @@ export function createKeeperAdapter(config: KeeperConfig): KeeperAdapter {
   return {
     address: account.address.toLowerCase(),
     readCase: (address, caseId) => read(address, "get_case", [caseId]) as Promise<Record<string, unknown>>,
-    readCourt: (address) => read(address, "get_court") as Promise<Record<string, unknown>>,
-    readOpenCaseIds: (address, limit) => read(address, "get_open_case_ids", [limit]) as Promise<unknown[]>,
-    readRepublic: (address) => read(address, "get_game") as Promise<Record<string, unknown>>,
-    writeCourt: (address, method, args) => write(address, method, args as CalldataEncodable[]),
-    writeRepublic: (address, method) => write(address, method),
+    readKeeperStatus: (address) => read(address, "get_keeper_status") as Promise<Record<string, unknown>>,
+    writeContract: (address, method, args) => write(address, method, args as CalldataEncodable[]),
   };
 }

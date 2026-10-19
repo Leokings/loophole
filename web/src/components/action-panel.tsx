@@ -6,6 +6,7 @@ import {
   createNonce,
   previewActionCommitment,
   previewObjectiveCommitment,
+  runKeeperOp,
   transactionExplorerUrl,
   waitForFinalizedTransaction,
   writeRepublic,
@@ -17,16 +18,15 @@ const actionLabels: Record<string, string> = {
   AMEND_LAW: "Amend a law",
   BUILD_INFLUENCE: "Build influence",
   GROW_WEALTH: "Grow wealth",
-  OPPOSE_LAW: "Oppose a bill",
   PROPOSE_CHARTER: "Propose a charter",
   PROPOSE_LAW: "Propose a statute",
   REPEAL_LAW: "Repeal a law",
   RESPOND_CRISIS: "Answer the crisis",
   RUN_FOR_OFFICE: "Run for office",
   STABILIZE: "Stabilize the republic",
-  SUPPORT_LAW: "Support a bill",
   UNDERMINE: "Undermine a rival",
   VETO_LAW: "Executive veto",
+  FILE_SUIT: "File suit",
 };
 
 const baseActions = [
@@ -36,8 +36,6 @@ const baseActions = [
   "UNDERMINE",
   "PROPOSE_LAW",
   "PROPOSE_CHARTER",
-  "SUPPORT_LAW",
-  "OPPOSE_LAW",
   "AMEND_LAW",
   "REPEAL_LAW",
 ];
@@ -50,7 +48,7 @@ const objectiveTypes = [
   "RIVAL_FALL",
 ];
 
-function emptyDraft(factionId: string): ActionDraft {
+function emptyDraft(factionId: string, openLawIds: number[] = []): ActionDraft {
   return {
     action_type: "BUILD_INFLUENCE",
     faction_id: factionId,
@@ -59,6 +57,7 @@ function emptyDraft(factionId: string): ActionDraft {
     rationale: "Build durable political capacity for the faction's long-term agenda.",
     target_faction_id: "",
     target_law_id: 0,
+    stances: openLawIds.map((law_id) => ({ law_id, stance: "ABSTAIN" })),
   };
 }
 
@@ -104,7 +103,10 @@ export function ActionPanel({
   snapshot: RepublicSnapshot;
   wallet: string;
 }) {
-  const [draft, setDraft] = useState<ActionDraft>(() => emptyDraft(selectedFactionId));
+  const openLaws = snapshot.laws.filter((law) => law.status === "PENDING"
+    && law.proposed_round < snapshot.game.round_number && snapshot.game.round_number <= law.closes_after_round);
+  const openLawIds = openLaws.map((law) => law.law_id);
+  const [draft, setDraft] = useState<ActionDraft>(() => emptyDraft(selectedFactionId, openLawIds));
   const [pendingReveal, setPendingReveal] = useState<PendingReveal | null>(() =>
     readPendingReveal(snapshot.game.round_number, selectedFactionId),
   );
@@ -120,13 +122,14 @@ export function ActionPanel({
     const result = [...baseActions];
     if (snapshot.game.election_open) result.push("RUN_FOR_OFFICE");
     if (snapshot.crisis?.status === "ACTIVE") result.push("RESPOND_CRISIS");
+    if (snapshot.suitTargets.length) result.push("FILE_SUIT");
     const executive = snapshot.offices.find((office) => office.office_id === "EXECUTIVE");
     if (executive?.holder_faction_id === selectedFactionId) result.push("VETO_LAW");
     return result;
-  }, [selectedFactionId, snapshot.crisis?.status, snapshot.game.election_open, snapshot.offices]);
+  }, [selectedFactionId, snapshot.crisis?.status, snapshot.game.election_open, snapshot.offices, snapshot.suitTargets]);
 
   function chooseAction(actionType: string) {
-    setDraft({ ...emptyDraft(selectedFactionId), action_type: actionType });
+    setDraft({ ...emptyDraft(selectedFactionId, openLawIds), action_type: actionType });
   }
 
   function run(task: () => Promise<unknown>) {
@@ -140,8 +143,10 @@ export function ActionPanel({
   }
 
   async function confirmFinality(hash: string, label: string) {
-    onToast(`${label} submitted · waiting for GenLayer finality`);
-    await waitForFinalizedTransaction(hash);
+    onToast(`${label} submitted · waiting for GenLayer`);
+    await waitForFinalizedTransaction(hash, label, (transaction) => {
+      if (transaction.stage === "accepted") onToast(`${label} accepted · appeal window open`);
+    });
     onToast(`${label} finalized onchain · ${hash.slice(0, 10)}…`);
   }
 
@@ -235,6 +240,7 @@ export function ActionPanel({
       pendingReveal.law_title,
       pendingReveal.law_text,
       pendingReveal.rationale,
+      JSON.stringify(pendingReveal.stances ?? []),
       pendingReveal.nonce,
     ]);
     await confirmFinality(hash, "Action reveal");
@@ -251,13 +257,10 @@ export function ActionPanel({
       onToast("The keeper would now wake GenLayer; validators choose every missing faction action.");
       return;
     }
-    const method = snapshot.game.phase === "READY_TO_FINALIZE_SEASON"
-      ? "finalize_season"
-      : snapshot.game.phase === "SEASON_FINAL"
-        ? "start_next_season"
-        : "advance_round";
-    const hash = await writeRepublic(account, method);
-    await confirmFinality(hash, method.replaceAll("_", " "));
+    const op = snapshot.keeperStatus.republic.ops[0];
+    if (!op) throw new Error("The republic has no public operation ready right now.");
+    const hash = await runKeeperOp(account, { ...op, contract: "republic" }, snapshot);
+    await confirmFinality(hash, op.method.replaceAll("_", " "));
     await onRefresh();
   }
 
@@ -329,10 +332,11 @@ export function ActionPanel({
   }
 
   const needsFactionTarget = draft.action_type === "UNDERMINE";
-  const needsLaw = ["SUPPORT_LAW", "OPPOSE_LAW", "AMEND_LAW", "REPEAL_LAW", "VETO_LAW"].includes(draft.action_type);
+  const needsLaw = ["AMEND_LAW", "REPEAL_LAW", "VETO_LAW"].includes(draft.action_type);
   const needsText = ["PROPOSE_LAW", "PROPOSE_CHARTER", "AMEND_LAW"].includes(draft.action_type);
   const needsOffice = draft.action_type === "RUN_FOR_OFFICE";
-  const canAdvance = ["READY_TO_ADVANCE", "READY_TO_FINALIZE_SEASON", "SEASON_FINAL"].includes(snapshot.game.phase);
+  const canAdvance = snapshot.keeperStatus.republic.ops.length > 0;
+  const selectedSuitTarget = snapshot.suitTargets.find((target) => target.defendantFactionId === draft.target_faction_id && target.lawId === draft.target_law_id);
 
   return (
     <section className="action-panel" aria-labelledby="action-heading">
@@ -415,6 +419,22 @@ export function ActionPanel({
           </label>
         ) : null}
 
+        {draft.action_type === "FILE_SUIT" ? (
+          <label className="wide-field">
+            <span>Recorded action and law to challenge</span>
+            <select value={selectedSuitTarget ? `${selectedSuitTarget.actionRound}|${selectedSuitTarget.defendantFactionId}|${selectedSuitTarget.lawId}` : ""}
+              onChange={(event) => {
+                const target = snapshot.suitTargets.find((candidate) => `${candidate.actionRound}|${candidate.defendantFactionId}|${candidate.lawId}` === event.target.value);
+                if (target) setDraft((current) => ({ ...current, target_faction_id: target.defendantFactionId, target_law_id: target.lawId }));
+              }}>
+              <option value="">Choose an eligible action</option>
+              {snapshot.suitTargets.map((target) => <option key={`${target.actionRound}|${target.defendantFactionId}|${target.lawId}`}
+                value={`${target.actionRound}|${target.defendantFactionId}|${target.lawId}`}>Round {target.actionRound} · {target.defendantFactionId} · {target.actionType} · Law #{target.lawId}</option>)}
+            </select>
+            {selectedSuitTarget ? <small>Key: {selectedSuitTarget.lawId}|{selectedSuitTarget.actionType}|{selectedSuitTarget.targetClass}</small> : null}
+          </label>
+        ) : null}
+
         {needsLaw ? (
           <label>
             <span>Law</span>
@@ -454,8 +474,19 @@ export function ActionPanel({
         </label>
       </div>
 
+      {openLaws.length ? <section className="stance-selector" aria-label="Free law stances">
+        <div><strong>Set your law stances</strong><p>Support, oppose, or abstain on each open bill. Stances are free and do not use your turn.</p></div>
+        {openLaws.map((law) => <label key={law.law_id}><span>#{law.law_id} · {law.title}</span>
+          <select value={draft.stances?.find((stance) => stance.law_id === law.law_id)?.stance ?? "ABSTAIN"}
+            onChange={(event) => setDraft((current) => ({ ...current, stances: openLawIds.map((lawId) => ({ law_id: lawId,
+              stance: lawId === law.law_id ? event.target.value as "SUPPORT" | "OPPOSE" | "ABSTAIN"
+                : current.stances?.find((stance) => stance.law_id === lawId)?.stance ?? "ABSTAIN" })) }))}>
+            <option value="ABSTAIN">Abstain</option><option value="SUPPORT">Support</option><option value="OPPOSE">Oppose</option>
+          </select></label>)}
+      </section> : null}
+
       <div className="action-footer">
-        <span className="commit-note">Actions are sealed first. The reveal phase prevents AI factions from reacting to hidden human moves.</span>
+        <span className="commit-note">Actions are sealed first. Free law stances are included with your sealed move.</span>
         {snapshot.game.phase === "COMMIT" ? (
           <button className="primary-button" type="button" onClick={() => run(commitAction)} disabled={isPending || Boolean(pendingReveal)}>
             {pendingReveal ? "Action sealed" : "Seal action"}
@@ -463,7 +494,7 @@ export function ActionPanel({
         ) : snapshot.game.phase === "REVEAL" ? (
           <button className="primary-button" type="button" onClick={() => run(revealAction)} disabled={isPending || !pendingReveal?.finalized}>Reveal action</button>
         ) : canAdvance ? (
-          <button className="primary-button" type="button" onClick={() => run(advanceWorld)} disabled={isPending}>Advance republic</button>
+          <button className="primary-button" type="button" onClick={() => run(advanceWorld)} disabled={isPending}>Run next public step · {snapshot.keeperStatus.republic.ops[0]?.method.replaceAll("_", " ")}</button>
         ) : null}
       </div>
 

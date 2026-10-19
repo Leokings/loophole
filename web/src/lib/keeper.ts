@@ -6,11 +6,14 @@ const PRIVATE_KEY_PATTERN = /^0x[a-fA-F0-9]{64}$/;
 const HASH_PATTERN = /^0x[a-fA-F0-9]{64}$/;
 const DEFAULT_MAX_CONTRACTS = 20;
 const HARD_MAX_CONTRACTS = 100;
+const DEFAULT_MAX_WRITES_PER_TICK = 3;
+const HARD_MAX_WRITES_PER_TICK = 6;
 
 export type KeeperConfig = {
   courtAddresses: string[];
   expectedAddress?: string;
   maxContracts: number;
+  maxWritesPerTick: number;
   network: "studionet" | "testnetBradbury";
   privateKey: `0x${string}`;
   republicAddresses: string[];
@@ -32,11 +35,8 @@ const NETWORKS = {
 export type KeeperAdapter = {
   address: string;
   readCase(address: string, caseId: number): Promise<Record<string, unknown>>;
-  readCourt(address: string): Promise<Record<string, unknown>>;
-  readOpenCaseIds(address: string, limit: number): Promise<unknown[]>;
-  readRepublic(address: string): Promise<Record<string, unknown>>;
-  writeCourt(address: string, method: string, args: unknown[]): Promise<string>;
-  writeRepublic(address: string, method: string): Promise<string>;
+  readKeeperStatus(address: string): Promise<Record<string, unknown>>;
+  writeContract(address: string, method: string, args: unknown[]): Promise<string>;
 };
 
 function required(value: string | undefined, name: string) {
@@ -68,13 +68,6 @@ function parseAddresses(value: string | undefined, name: string, requiredList: b
   return result;
 }
 
-function scalar(value: unknown) {
-  if (typeof value === "bigint" || typeof value === "number" || typeof value === "string") {
-    return Number(value);
-  }
-  return 0;
-}
-
 function validHash(value: string) {
   if (!HASH_PATTERN.test(value)) throw new Error("GenLayer did not return a transaction hash");
   return value;
@@ -94,6 +87,11 @@ export function parseKeeperConfig(environment: Readonly<Record<string, string | 
     environment.LOOPHOLE_KEEPER_MAX_CONTRACTS,
     DEFAULT_MAX_CONTRACTS,
     HARD_MAX_CONTRACTS,
+  );
+  const maxWritesPerTick = positiveInteger(
+    environment.LOOPHOLE_KEEPER_MAX_WRITES_PER_TICK,
+    DEFAULT_MAX_WRITES_PER_TICK,
+    HARD_MAX_WRITES_PER_TICK,
   );
   const republicAddresses = parseAddresses(
     environment.LOOPHOLE_REPUBLIC_ADDRESSES || environment.NEXT_PUBLIC_REPUBLIC_ADDRESS,
@@ -131,6 +129,7 @@ export function parseKeeperConfig(environment: Readonly<Record<string, string | 
     courtAddresses,
     expectedAddress,
     maxContracts,
+    maxWritesPerTick,
     network: networkName,
     privateKey: privateKey as `0x${string}`,
     republicAddresses,
@@ -167,71 +166,51 @@ export async function runKeeper({
     }
   }
 
-  const republicWindowOpen = isInKeeperWindow(now, config.republicSlotSeconds);
-  for (const address of config.republicAddresses) {
-    if (!republicWindowOpen) {
+  const contracts = [
+    ...config.republicAddresses.map((address) => ({ address, kind: "republic" as const })),
+    ...config.courtAddresses.map((address) => ({ address, kind: "court" as const })),
+  ];
+  const writeCap = Math.min(config.maxWritesPerTick, HARD_MAX_WRITES_PER_TICK);
+  for (const contract of contracts) {
+    const { address, kind } = contract;
+    if (kind === "republic" && !isInKeeperWindow(now, config.republicSlotSeconds)) {
       skipped += 1;
-      results.push({
-        address,
-        kind: "republic",
-        nextSlotAt: nextKeeperSlotAt(now, config.republicSlotSeconds),
-        status: "paced",
-      });
+      results.push({ address, kind, nextSlotAt: nextKeeperSlotAt(now, config.republicSlotSeconds), status: "paced" });
       continue;
     }
     try {
-      const game = await adapter.readRepublic(address);
-      const phase = String(game.phase ?? "UNKNOWN");
-      const method = phase === "READY_TO_ADVANCE"
-        ? "advance_round"
-        : phase === "READY_TO_FINALIZE_SEASON"
-          ? "finalize_season"
-          : phase === "SEASON_FINAL"
-            ? "start_next_season"
-            : "";
-      if (!method) {
+      const keeperStatus = await adapter.readKeeperStatus(address);
+      const ops = Array.isArray(keeperStatus.ops) ? keeperStatus.ops : [];
+      if (ops.length === 0) {
         skipped += 1;
-        results.push({ address, kind: "republic", phase, status: "skipped" });
+        results.push({ address, kind, status: "skipped" });
         continue;
       }
-      const transactionHash = validHash(await adapter.writeRepublic(address, method));
-      submitted += 1;
-      results.push({ address, kind: "republic", method, phase, status: "submitted", transactionHash });
-    } catch (cause) {
-      recordError({ address, kind: "republic" }, cause);
-    }
-  }
-
-  for (const address of config.courtAddresses) {
-    try {
-      const court = await adapter.readCourt(address);
-      const openCaseCount = scalar(court.open_case_count);
-      const scanLimit = Math.min(openCaseCount, config.maxContracts);
-      const openCaseIds = scanLimit > 0
-        ? (await adapter.readOpenCaseIds(address, scanLimit))
-          .map(scalar)
-          .filter((caseId) => Number.isSafeInteger(caseId) && caseId > 0)
-        : [];
-      let actionable = 0;
-      for (const caseId of openCaseIds) {
-        const item = await adapter.readCase(address, caseId);
-        const status = String(item.status ?? "");
-        let method = "";
-        if (status === "BRIEFING" && now >= scalar(item.brief_deadline)) method = "resolve_case";
-        if (status === "APPEAL_WINDOW" && now >= scalar(item.appeal_deadline)) method = "finalize_case";
-        if (status === "APPEALED" && now >= scalar(item.appeal_response_deadline)) method = "resolve_appeal";
-        if (!method) continue;
-        const transactionHash = validHash(await adapter.writeCourt(address, method, [caseId]));
-        actionable += 1;
-        submitted += 1;
-        results.push({ address, caseId, kind: "court", method, status: "submitted", transactionHash });
-      }
-      if (actionable === 0) {
-        skipped += 1;
-        results.push({ address, kind: "court", status: "skipped" });
+      let writes = 0;
+      for (const rawOp of ops) {
+        if (writes >= writeCap) break;
+        const op = rawOp && typeof rawOp === "object" ? rawOp as Record<string, unknown> : {};
+        const method = String(op.method ?? "");
+        const args = Array.isArray(op.args) ? op.args : [];
+        if (!method) {
+          failed += 1;
+          results.push({ address, kind, status: "failed", error: "Keeper status contained an invalid operation" });
+          break;
+        }
+        try {
+          const transactionHash = validHash(await adapter.writeContract(address, method, args));
+          writes += 1;
+          submitted += 1;
+          results.push({ address, args, kind, method, status: "submitted", transactionHash });
+        } catch (cause) {
+          const beforeFailed = failed;
+          const beforeDeferred = deferred;
+          recordError({ address, args, kind, method }, cause);
+          if (failed > beforeFailed || deferred > beforeDeferred) break;
+        }
       }
     } catch (cause) {
-      recordError({ address, kind: "court" }, cause);
+      recordError({ address, kind }, cause);
     }
   }
 

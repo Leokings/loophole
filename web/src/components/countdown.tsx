@@ -7,12 +7,15 @@ function remaining(deadline: number) {
 }
 
 export function Countdown({ deadline }: { deadline: number }) {
-  const [seconds, setSeconds] = useState(() => remaining(deadline));
+  // Keep the server and first browser render identical; the clock starts after hydration.
+  const [seconds, setSeconds] = useState<number | null>(null);
 
   useEffect(() => {
     const interval = window.setInterval(() => setSeconds(remaining(deadline)), 1000);
     return () => window.clearInterval(interval);
   }, [deadline]);
+
+  if (seconds === null) return <time dateTime="PT0S">--:--:--</time>;
 
   const days = Math.floor(seconds / 86_400);
   const hours = Math.floor((seconds % 86_400) / 3600);

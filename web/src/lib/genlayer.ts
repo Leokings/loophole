@@ -4,22 +4,17 @@ import { TransactionStatus, type CalldataEncodable } from "genlayer-js/types";
 
 import type {
   ActionDraft,
-  CourtCase,
-  CourtState,
-  Crisis,
-  Faction,
-  GameState,
-  Law,
-  Office,
-  Objective,
   RepublicSnapshot,
-  RoundAction,
-  RoundSummary,
 } from "@/lib/types";
+import { readBoundedRepublicSnapshot } from "@/lib/snapshot";
 import { republicSlotSeconds } from "@/lib/heartbeat";
 import {
   assertFinalizedTransaction,
+  FinalizedTransactionFailure,
+  saveTrackedTransaction,
   TransactionFinalityUncertainError,
+  transactionStageForStatus,
+  type TrackedTransaction,
   type FinalityReceipt,
 } from "@/lib/transaction";
 import {
@@ -33,6 +28,7 @@ const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
 export const republicAddress = process.env.NEXT_PUBLIC_REPUBLIC_ADDRESS ?? "";
 export const courtAddress = process.env.NEXT_PUBLIC_COURT_ADDRESS ?? "";
+export const caseLawAddress = process.env.NEXT_PUBLIC_CASELAW_ADDRESS ?? "";
 const configuredNetworkValue = process.env.NEXT_PUBLIC_GENLAYER_NETWORK || "testnetBradbury";
 if (configuredNetworkValue !== "studionet" && configuredNetworkValue !== "testnetBradbury") {
   throw new Error("NEXT_PUBLIC_GENLAYER_NETWORK must be studionet or testnetBradbury");
@@ -49,6 +45,7 @@ export const keeperSlotSeconds = republicSlotSeconds(
 
 export const hasLiveRepublic = ADDRESS_PATTERN.test(republicAddress);
 export const hasLiveCourt = ADDRESS_PATTERN.test(courtAddress);
+export const hasLiveCaseLaw = ADDRESS_PATTERN.test(caseLawAddress);
 
 type HexAddress = `0x${string}`;
 type ClientConfig = NonNullable<Parameters<typeof createClient>[0]>;
@@ -112,21 +109,6 @@ async function writeClientFor(address: string) {
   await ensureWalletNetwork(provider, walletNetwork());
   activeBrowserProvider = provider;
   return clientFor(address as HexAddress, provider);
-}
-
-function serializable<T>(value: unknown): T {
-  return JSON.parse(
-    JSON.stringify(value, (_key, item) => (typeof item === "bigint" ? Number(item) : item)),
-  ) as T;
-}
-
-function parseJson<T>(value: unknown, fallback: T): T {
-  if (typeof value !== "string") return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
 }
 
 async function read(address: string, functionName: string, args: unknown[] = []) {
@@ -201,27 +183,113 @@ export async function writeCourt(
   return String(hash);
 }
 
-export async function waitForFinalizedTransaction(hash: string): Promise<void> {
-  let receipt: FinalityReceipt;
-  try {
-    receipt = await clientFor().waitForTransactionReceipt({
-      hash: hash as TransactionHash,
-      interval: 3_000,
-      retries: 240,
-      status: TransactionStatus.FINALIZED,
-    }) as unknown as FinalityReceipt;
-  } catch (cause) {
-    throw new TransactionFinalityUncertainError(
-      "Finality polling was interrupted. The transaction may still finalize; its local secret has been preserved.",
-      cause,
-    );
+export async function writeCaseLaw(account: string, functionName: string, args: unknown[] = []): Promise<string> {
+  if (!hasLiveCaseLaw) throw new Error("No live CaseLaw contract is configured.");
+  const client = await writeClientFor(account);
+  const hash = await client.writeContract({
+    address: caseLawAddress as HexAddress,
+    args: args as CalldataEncodable[],
+    functionName,
+    value: 0n,
+  });
+  return String(hash);
+}
+
+export async function runKeeperOp(
+  account: string,
+  op: { args: unknown[]; contract: "republic" | "court"; method: string },
+  snapshot: RepublicSnapshot,
+): Promise<string> {
+  const status = op.contract === "republic" ? snapshot.keeperStatus.republic : snapshot.keeperStatus.court;
+  if (!status?.ops.some((candidate) => candidate.method === op.method
+    && JSON.stringify(candidate.args) === JSON.stringify(op.args))) {
+    throw new Error("That permissionless operation is not currently listed by the contract.");
   }
-  assertFinalizedTransaction(receipt);
+  const allowed = op.contract === "republic"
+    ? new Set(["finalize_season", "close_crisis", "judge_crisis_response", "certify_law", "open_crisis", "advance_round", "advance_round_fallback"])
+    : new Set(["expire_case", "resolve_case", "resolve_stayed_case", "recover_case_effects"]);
+  if (!allowed.has(op.method)) throw new Error("This operation is not available from the public keeper status.");
+  return op.contract === "republic"
+    ? writeRepublic(account, op.method, op.args)
+    : writeCourt(account, op.method, op.args);
+}
+
+const activeFinalityPolls = new Map<string, Promise<void>>();
+
+export function waitForFinalizedTransaction(
+  hash: string,
+  label = "Transaction",
+  onStatus?: (transaction: TrackedTransaction) => void,
+): Promise<void> {
+  const active = activeFinalityPolls.get(hash);
+  if (active) return active;
+  const polling = pollUntilFinalized(hash, label, onStatus);
+  activeFinalityPolls.set(hash, polling);
+  void polling.then(() => activeFinalityPolls.delete(hash), () => activeFinalityPolls.delete(hash));
+  return polling;
+}
+
+async function pollUntilFinalized(hash: string, label: string, onStatus?: (transaction: TrackedTransaction) => void) {
+  const transactionHash = hash as TransactionHash;
+  let lastStage: TrackedTransaction["stage"] = "submitted";
+  let transaction: TrackedTransaction = { label, stage: lastStage, transactionHash: hash, updatedAt: Date.now() };
+  saveTrackedTransaction(transaction);
+  onStatus?.(transaction);
+  const client = clientFor();
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    try {
+      const receipt = await client.getTransaction({ hash: transactionHash });
+      const stage = transactionStageForStatus(receipt.statusName ?? receipt.status);
+      if (stage !== lastStage) {
+        lastStage = stage;
+        transaction = { ...transaction, stage, updatedAt: Date.now() };
+        saveTrackedTransaction(transaction);
+        onStatus?.(transaction);
+      }
+      if (receipt.statusName === TransactionStatus.FINALIZED || receipt.status === TransactionStatus.FINALIZED) {
+        try {
+          assertFinalizedTransaction(receipt as unknown as FinalityReceipt);
+          transaction = { ...transaction, stage: "finalized-success", updatedAt: Date.now() };
+          saveTrackedTransaction(transaction);
+          onStatus?.(transaction);
+          return;
+        } catch (cause) {
+          if (cause instanceof TransactionFinalityUncertainError) throw cause;
+          const message = cause instanceof Error ? cause.message : "The finalized transaction failed.";
+          transaction = { ...transaction, error: message, stage: "finalized-error", updatedAt: Date.now() };
+          saveTrackedTransaction(transaction);
+          onStatus?.(transaction);
+          throw cause;
+        }
+      }
+      if (receipt.statusName === TransactionStatus.CANCELED || receipt.status === TransactionStatus.CANCELED) {
+        const message = "GenLayer cancelled this transaction.";
+        transaction = { ...transaction, error: message, stage: "finalized-error", updatedAt: Date.now() };
+        saveTrackedTransaction(transaction);
+        onStatus?.(transaction);
+        throw new Error(message);
+      }
+    } catch (cause) {
+      if (cause instanceof FinalizedTransactionFailure) throw cause;
+      if (cause instanceof Error && cause.message === "GenLayer cancelled this transaction.") throw cause;
+      if (cause instanceof TransactionFinalityUncertainError) throw cause;
+      // Transient RPC errors are retried at the same five-second cadence as status reads.
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 5_000));
+  }
+  throw new TransactionFinalityUncertainError(
+    "Finality is still pending after 20 minutes. This transaction remains saved and will resume checking after a reload.",
+  );
 }
 
 export function transactionExplorerUrl(hash: string): string {
   const base = selectedChain.blockExplorers?.default.url;
   return base ? `${base.replace(/\/$/, "")}/tx/${hash}` : "";
+}
+
+export function contractExplorerUrl(address: string): string {
+  const base = selectedChain.blockExplorers?.default.url;
+  return base && ADDRESS_PATTERN.test(address) ? `${base.replace(/\/$/, "")}/address/${address}` : "";
 }
 
 export function createNonce(): string {
@@ -239,9 +307,22 @@ export async function previewActionCommitment(draft: ActionDraft, nonce: string)
     draft.law_title,
     draft.law_text,
     draft.rationale,
+    JSON.stringify(draft.stances ?? []),
     nonce,
   ]);
   return String(result);
+}
+
+export async function fileCase(
+  account: string,
+  input: { actionRound: number; claim: string; defendantFactionId: string; lawId: number; plaintiffFactionId: string; reference: string },
+) {
+  return writeCourt(account, "file_case", [input.reference, input.plaintiffFactionId, input.defendantFactionId,
+    input.actionRound, input.lawId, input.claim]);
+}
+
+export async function submitBrief(account: string, caseId: number, factionId: string, brief: string) {
+  return writeCourt(account, "submit_brief", [caseId, factionId, brief]);
 }
 
 export async function previewObjectiveCommitment(
@@ -259,70 +340,11 @@ export async function previewObjectiveCommitment(
   return String(result);
 }
 
-async function readCourtCases(state: CourtState): Promise<CourtCase[]> {
-  const first = Math.max(1, state.case_count - 3);
-  const requests: Array<Promise<unknown>> = [];
-  for (let id = state.case_count; id >= first; id -= 1) {
-    requests.push(read(courtAddress, "get_case", [id]));
-  }
-  return serializable<CourtCase[]>(await Promise.all(requests));
-}
-
 export async function readRepublicSnapshot(): Promise<RepublicSnapshot> {
   if (!hasLiveRepublic) throw new Error("No live republic contract is configured.");
-  const game = serializable<GameState>(await read(republicAddress, "get_game"));
-  const firstLaw = Math.max(1, game.law_count - 3);
-  const lawRequests: Array<Promise<unknown>> = [];
-  for (let id = game.law_count; id >= firstLaw; id -= 1) {
-    lawRequests.push(read(republicAddress, "get_law", [id]));
-  }
-
-  const factionsPromise = read(republicAddress, "get_factions_json");
-  const officesPromise = read(republicAddress, "get_offices_json");
-  const summaryPromise = game.round_number > 1
-    ? read(republicAddress, "get_round_summary", [game.round_number - 1])
-    : Promise.resolve(null);
-  const crisisPromise = game.active_crisis_id > 0
-    ? read(republicAddress, "get_crisis", [game.active_crisis_id])
-    : Promise.resolve(null);
-  const courtPromise = hasLiveCourt ? read(courtAddress, "get_court") : Promise.resolve(null);
-
-  const [factionsRaw, officesRaw, summaryRaw, crisisRaw, courtRaw, lawsRaw] = await Promise.all([
-    factionsPromise,
-    officesPromise,
-    summaryPromise,
-    crisisPromise,
-    courtPromise,
-    Promise.all(lawRequests),
-  ]);
-
-  const court = courtRaw ? serializable<CourtState>(courtRaw) : null;
-  const factions = parseJson<Faction[]>(factionsRaw, []);
-  const objectiveRequests = factions.map((faction) =>
-    read(republicAddress, "get_objective", [faction.faction_id]),
-  );
-  const currentActionRequests = factions.map((faction) =>
-    read(republicAddress, "get_round_action", [game.round_number, faction.faction_id])
-      .then((action) => serializable<RoundAction>(action))
-      .catch(() => null),
-  );
-  const crisisRecord = crisisRaw ? serializable<Crisis & { responses_json?: string }>(crisisRaw) : null;
-  const crisis = crisisRecord
-    ? { ...crisisRecord, responses: parseJson(crisisRecord.responses_json, []) }
-    : null;
-
-  return {
-    cases: court ? await readCourtCases(court) : [],
-    court,
-    crisis,
-    current_actions: (await Promise.all(currentActionRequests)).filter(
-      (action): action is RoundAction => action !== null,
-    ),
-    factions,
-    game,
-    laws: serializable<Law[]>(lawsRaw),
-    offices: parseJson<Office[]>(officesRaw, []),
-    objectives: serializable<Objective[]>(await Promise.all(objectiveRequests)),
-    summary: summaryRaw ? parseJson<RoundSummary | null>(summaryRaw, null) : null,
-  };
+  return readBoundedRepublicSnapshot(read, {
+    republic: republicAddress,
+    court: hasLiveCourt ? courtAddress : undefined,
+    caseLaw: hasLiveCaseLaw ? caseLawAddress : undefined,
+  });
 }

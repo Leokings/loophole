@@ -28,7 +28,8 @@ const actions = [
   ["Grow wealth", "Increase the resources available to your faction and its strategy."],
   ["Stabilize", "Repair the republic directly when instability threatens every faction."],
   ["Undermine", "Pressure a rival and weaken its ability to control the next outcome."],
-  ["Legislate", "Propose, support, oppose, amend, or repeal statutes and charter rules."],
+  ["Shape the code", "Propose, amend, or repeal rules. Choose Support, Oppose, or Abstain on each open bill separately."],
+  ["File a suit", "Challenge one action under one certified law while the action is in the filing window."],
   ["Answer a crisis", "Submit a concrete response judged against the published crisis standard."],
 ];
 
@@ -43,6 +44,7 @@ export default function HowToPlayPage() {
         </Link>
         <nav aria-label="Guide navigation">
           <Link href="/">Chamber</Link>
+          <Link href="/case-law">Case law</Link>
           <Link className="active" href="/how-to-play" aria-current="page">How to play</Link>
         </nav>
         <Link className="guide-enter" href="/">Enter the republic <span aria-hidden="true">→</span></Link>
@@ -96,7 +98,7 @@ export default function HowToPlayPage() {
           <div className="guide-section-heading">
             <span className="eyebrow">The game in sixty seconds</span>
             <h2 id="loop-title">Every round is a sealed political contest.</h2>
-            <p>You choose intent before seeing everyone else’s answer. Once the clocks expire, autonomous seats act and consensus produces one accepted history.</p>
+            <p>You choose intent and free law stances before seeing everyone else’s answer. Once the clocks expire, autonomous seats act and consensus produces one accepted history.</p>
           </div>
           <ol className="guide-loop">
             {phases.map((phase) => (
@@ -154,6 +156,7 @@ export default function HowToPlayPage() {
             <strong>Write a useful rationale.</strong>
             <p>Consensus AI evaluates whether a move fits its stated action, available resources, faction doctrine, current laws, and crisis standard. Specific plans outperform vague slogans.</p>
           </aside>
+          <aside className="guide-tip"><strong>Free law stances do not use your turn.</strong><p>Choose Support, Oppose, or Abstain on each open bill while sealing your action. The bill sponsor counts as one support vote.</p></aside>
         </section>
 
         <section className="guide-ai-section" aria-labelledby="ai-title">
@@ -178,14 +181,16 @@ export default function HowToPlayPage() {
               <span className="eyebrow">Law and precedent</span>
               <h2 id="court-guide-title">Lose the vote. Challenge the record.</h2>
             </div>
-            <p>The court is another strategy layer, not a decorative menu. A case freezes the challenged action and the laws that applied when it happened.</p>
+            <p>A case freezes one challenged action and one certified law that applied when it happened. The public Case law page keeps the resulting rule labels and exact quotes visible without a wallet.</p>
           </div>
           <div className="court-flow">
             <article><span>01</span><h3>File</h3><p>Name the defendant, action round, cited law, and exact violation.</p></article>
-            <article><span>02</span><h3>Brief</h3><p>Both sides make arguments against the frozen evidence.</p></article>
-            <article><span>03</span><h3>Rule</h3><p>Validators audit the proposed judgment and any sanction.</p></article>
-            <article><span>04</span><h3>Appeal</h3><p>A final ruling can establish precedent for future disputes.</p></article>
+            <article><span>02</span><h3>Brief</h3><p>Both sides make arguments against the frozen action and law.</p></article>
+            <article><span>03</span><h3>Decide</h3><p>Validators agree on a narrow label and an exact quote from the cited rule.</p></article>
+            <article><span>04</span><h3>Remember</h3><p>Finalized holdings guide later cases under that law version.</p></article>
           </div>
+          <p className="guide-inline-note"><strong>Certification comes first.</strong> Validators check whether a proposed law is specific enough to apply to evidence. An unadjudicable rule cannot be used to file a case.</p>
+          <aside className="guide-tip"><strong>Safe harbors matter.</strong><p>A NOT_COVERED holding is a safe harbor for that law version and action class. An amendment can close that gap for future actions; it does not rewrite the older holding.</p><Link href="/case-law">Browse public holdings →</Link></aside>
         </section>
 
         <section className="guide-section guide-faq" aria-labelledby="faq-title">

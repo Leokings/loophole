@@ -1,117 +1,43 @@
-# Loophole architecture
+# Loophole V7 architecture
 
-## Product invariant
+## Contracts and authority
 
-No game-critical path may require a second human, a live lobby, or an off-chain judge. A republic has fixed faction seats. Humans can temporarily control seats, but every empty seat and every missed reveal is resolved by consensus-validated AI inside `AutonomousRepublic`. The world therefore advances with zero, one, or many people online.
+`AutonomousRepublic.py` is authoritative for faction state, legal actions, law lifecycle, bounded round history, elections, crises, seasons, and numeric consequences. Its `FILE_SUIT` action can request litigation only for a prior-round action and an effective, adjudicable law. Its public snapshot includes the current bounded world state and the contract-calculated suit targets.
 
-## Authority boundary
+`RepublicCourt.py` is authoritative for frozen case evidence and case lifecycle. A case binds one law version to one recorded action and its target class. At filing, it checks CaseLaw: an existing holding creates a code-only `SUMMARY`; an active deciding case makes the new case `STAYED`; otherwise it becomes `BRIEFING`. A novel case judgment is limited to a label and a verbatim quote. Contract code derives the disposition, sanction, key, and digest.
 
-### `AutonomousRepublic` owns
+`CaseLaw.py` is the reusable, immutable registry. Only the linked court can record a holding. The key binds the law version, action type, and target class. Idempotent replays are safe; conflicting records are rejected. A `NOT_COVERED` holding is a safe harbor for that exact law version and key. Amending a law creates a new version; it does not mutate the old holding.
 
-- Factions, renewable controller leases, resources, legitimacy, stability, rounds, and deadlines.
-- Human action and secret-objective commitments and reveals.
-- The public snapshot supplied to AI faction reasoning.
-- The closed action schema and all deterministic numeric effects.
-- Statutes, charters, amendments, repeal, veto windows, and historical effectiveness.
-- Offices, election scheduling and outcomes.
-- Crisis creation, responses, scoring, and consequences.
-- Season scoring, winners, summaries, and lifetime points.
-- Exactly-once application of sanctions from its configured court, keyed by the underlying faction action as well as case ID.
+The browser reads aggregate views, displays evidence and case history, and asks a connected wallet to sign writes. It cannot decide cases or set numeric outcomes. The keeper reads each contract's bounded operation queue and submits only listed permissionless operations. It does not choose AI moves or court outcomes.
 
-### `RepublicCourt` owns
+## Finality and cross-contract effects
 
-- Case identity, action-based deduplication, party authorization, and the eight-round filing window.
-- Immutable evidence captured from resolved republic actions and laws effective at that round.
-- Briefing and appeal deadlines.
-- Consensus-validated verdicts and appeal decisions.
-- An oldest-first queue of every unresolved case, final rulings, precedent, and a replay-safe sanction callback to its linked republic.
-
-### GenLayer nondeterministic execution owns
-
-- Strategic action selection for missing faction turns.
-- Crisis descriptions and resolution standards.
-- Evaluation of bounded crisis responses.
-- Legal interpretation for initial rulings and appeals.
-- Independent validator audits of each proposed nondeterministic result.
-
-It does not own balances or arbitrary state transitions. Every result is parsed against an exact schema and then passed to deterministic code.
-
-### The browser and keeper own
-
-- Wallet connection, polling, rendering, local unrevealed nonces, uncertain-finality recovery, and transaction submission.
-- Non-authoritative demo data when no live address is configured.
-- Permissionless wake-up calls after an on-chain deadline.
-
-The keeper has no policy input. It reads accepted phase/status fields and calls only `advance_round`, `finalize_season`, `start_next_season`, `resolve_case`, `finalize_case`, or `resolve_appeal` when the contract reports that the corresponding deadline has arrived. Court work comes from the bounded oldest-first open-case queue rather than a recent numeric ID window.
-
-## Round lifecycle
-
-1. During `COMMIT`, a human controller stores only a digest of one exact structured action.
-2. During `REVEAL`, the controller publishes that action plus its nonce; the contract recomputes the digest.
-3. At `READY_TO_ADVANCE`, any account can call `advance_round()`.
-4. The contract collects every missing faction ID. An AI leader proposes one legal action per missing ID from the same pre-settlement snapshot.
-5. Independent validators check doctrine alignment, legality, resource constraints, action order, and anti-collusion rules.
-6. The contract parses the agreed batch again, stores sources as `AI_EMPTY_SEAT` or `AI_TIMEOUT`, and applies all faction actions in stable seat order.
-7. Law votes, elections, crisis resolution, and the next crisis opening settle; an append-only round summary is stored.
-8. The next commit/reveal window opens, or the season enters objective reveal.
-
-No unrevealed commitment is included in an AI prompt. AI replacement actions therefore cannot inspect a human's hidden move.
-
-## Closed action surface
-
-| Action | Contract-owned effect |
-| --- | --- |
-| `BUILD_INFLUENCE` | Add 2 influence. |
-| `GROW_WEALTH` | Add 2 wealth. |
-| `STABILIZE` | Spend 1 wealth and add 2 stability; the Treasurer waives the cost. |
-| `UNDERMINE` | Spend 1 influence; remove 1 rival legitimacy and 1 stability. |
-| `PROPOSE_LAW` | Spend 2 influence, or 1 as Speaker, and open a statute vote. |
-| `SUPPORT_LAW` / `OPPOSE_LAW` | Cast one faction vote on a pending measure. |
-| `PROPOSE_CHARTER` | Spend 4 influence and open a supermajority charter vote. |
-| `AMEND_LAW` | Spend 3 influence and propose a replacement with linked history. |
-| `REPEAL_LAW` | Spend 2 influence and propose the end of an enacted law. |
-| `RUN_FOR_OFFICE` | Spend 1 influence and enter one open office election. |
-| `VETO_LAW` | The Executive voids a newly enacted statute before it becomes effective. |
-| `RESPOND_CRISIS` | Spend 1 wealth and submit a bounded response for consensus scoring. |
-
-The LLM cannot invent action types, transfers, rewards, sanctions, or storage fields.
-
-## Law and court integrity
-
-Statutes receive a one-round delayed effective date so the Executive has a veto window. Charters and charter amendments require a two-thirds threshold. Amendments supersede an earlier law and repeal closes its effective range; the historical record remains readable.
-
-When a controller files a case, the court reads the cited action, factions, and laws directly from the republic and freezes a canonical evidence digest. Later law amendments cannot rewrite what was effective when the disputed action occurred. One underlying faction action can create at most one case, and an action older than eight rounds is no longer litigable. A finalized sanction is sent asynchronously to `apply_court_ruling`; the republic recognizes only its configured court, deduplicates both the case and frozen action, and owns the fixed penalty table. If the child message fails, anyone may call `recover_sanction`; accepted republic state makes that replay idempotent.
-
-## Seasons and population independence
-
-Seasons last 8–30 rounds. Elections recur every four rounds, and crises recur on the same cadence when room remains in the season. Public action outcomes create event points. Each faction also has a default objective or can commit and later reveal a secret one. Unrevealed secret objectives receive no objective score; they never block finalization. After the reveal deadline, the keeper can finalize standings and start the next season.
-
-This design makes low population a game characteristic rather than an availability failure. Human participation changes who chooses faction strategy, not whether the simulation can operate.
-
-## Consensus and input safety
-
-- All LLM responses use exact key sets, bounded strings, canonical identifiers, and enumerated values.
-- The leader must return exactly the requested faction IDs in stable order.
-- Validators independently reason over the public state and proposed output rather than merely checking JSON shape.
-- Player-controlled doctrine, law, claim, brief, and response text is quoted as data and length/control-character bounded.
-- Deterministic validation runs before storage and again at settlement where relevant.
-- Cross-contract callbacks authenticate the caller and are idempotent by case ID, underlying action, and ruling digest.
-- Contract source pins the GenLayer runtime dependency on its first line.
-
-## Off-chain topology
-
-```text
-browser wallet ---- signed player writes ----> GenLayer contracts
-       |                                         ^
-       +---- accepted-state reads ---------------+
-
-Cloudflare Cron ---> protected Next.js route on Vercel ---> permissionless deadline writes
-   shared secret                 |
-                                 +-- server-only dedicated keeper key
+```mermaid
+sequenceDiagram
+  participant U as Player or AI seat
+  participant R as AutonomousRepublic
+  participant C as RepublicCourt
+  participant K as CaseLaw
+  participant G as GenLayer finality
+  U->>C: File one frozen action under one effective law
+  C->>K: Read holding for the deterministic key
+  alt Existing holding
+    C->>C: Derive summary from stored label and quote; no LLM call
+  else Novel key
+    C->>C: Validators judge fixed label + verbatim quote
+    C->>G: Submit ruling
+    G-->>C: Finalized callback
+    C->>K: Record immutable holding if label permits
+    C->>R: Apply deterministic case outcome once
+  end
 ```
 
-Vercel hosts the client and the signing route. Cloudflare supplies only scheduling and the shared bearer secret; it never receives the GenLayer key. Neither service is authoritative. If either is unavailable, any account or replacement scheduler can issue the same ready-phase calls without migrating game state.
+The callback is the boundary between a proposed result and a permanent holding or consequence. Before finality, the case may show an accepted ruling with effects pending. `recover_case_effects` can re-emit missing idempotent callbacks. A stay is released only after a first holding arrives, or becomes the deciding case when the earlier attempt terminates without one. Deadline expiry is fail-closed and creates no holding or sanction.
 
-## Scaling path
+## Trust boundaries
 
-Each republic/court pair is an independent world. Discovery, searchable history, notifications, and analytics can be indexed off-chain without becoming authoritative. Multiple republic addresses can share one keeper invocation up to a configured cap, and failures are isolated per contract. At larger scale, shard address lists across scheduled invocations rather than expanding a single unbounded call.
+- Validators establish agreement on bounded semantic outputs. They do not independently prove the truth of arbitrary web claims.
+- Quotes are checked against frozen law text; actions and target classes come from accepted contract state, not plaintiff prose.
+- Deterministic code validates inputs, enforces effective dates and deadlines, derives verdicts and sanctions, and deduplicates effects.
+- The UI labels live reads separately from a recorded proof manifest. A source hash shows byte identity to the recorded source; it does not prove the design is correct.
+- Contract state, submitted case evidence, quotes, addresses, and transactions are public and persistent. Game resources are synthetic units, not financial assets.
