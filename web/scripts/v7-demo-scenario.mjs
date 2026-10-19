@@ -943,11 +943,29 @@ export const revision2StagePlan = Object.freeze([
   { id: "r10_fallback", readyRound: 10, attached: ["cases_r9"] },
 ]);
 
+export function isRetryableRecoveryEnvelopeStop(state) {
+  const stopped = state?.stopped;
+  return stopped?.stage === "r7"
+    && stopped.message === "Case A recovery did not report both effect flags as false."
+    && stopped.exit_code === 2
+    && state.current_game?.round_number === 7
+    && state.current_game?.phase === "READY_TO_ADVANCE"
+    && state.completed_stages?.includes("r6")
+    && !state.completed_stages.includes("r7")
+    && state.steps?.["guard:file-case-from-republic"]?.status === "FINALIZED_EXPECTED_FAILURE"
+    && state.steps?.["guard:record-holding"]?.status === "FINALIZED_EXPECTED_FAILURE"
+    && state.steps?.["guard:recover-effects"]?.status === "FINALIZED_SUCCESS";
+}
+
 export async function runScenario(ctx, orderedStages = stages) {
   const state = stateFor(ctx);
-  if (state.stopped?.exit_code === 2 || state.stopped?.exit_code === 1) throw new ScenarioStopError("This run previously stopped on an unexpected result; owner review is required before another attempt.");
+  const retryingRecoveryEnvelopeStop = isRetryableRecoveryEnvelopeStop(state);
+  if ((state.stopped?.exit_code === 2 || state.stopped?.exit_code === 1) && !retryingRecoveryEnvelopeStop) {
+    throw new ScenarioStopError("This run previously stopped on an unexpected result; owner review is required before another attempt.");
+  }
   delete state.paused;
   delete state.stopped;
+  if (retryingRecoveryEnvelopeStop) await save(ctx);
   state.stage_order ??= orderedStages.map((stage) => stage.id);
   for (const stage of orderedStages) {
     if (state.completed_stages.includes(stage.id)) continue;

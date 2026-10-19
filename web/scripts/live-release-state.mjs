@@ -9,6 +9,7 @@ import { createAccount } from "genlayer-js";
 import { projectRoot } from "./deployment-shared.mjs";
 import { assertReleaseBranch } from "./deploy-loophole.mjs";
 import { load, loadWallets } from "./run-v7-demo.mjs";
+import { isRetryableRecoveryEnvelopeStop } from "./v7-demo-scenario.mjs";
 import { releaseTimings } from "./v7-release-guards.mjs";
 import { exitCodeFor } from "./v7-runner-runtime.mjs";
 
@@ -158,7 +159,9 @@ export async function executeLive(mode, root = projectRoot) {
   if (!["check", "deploy", "resume"].includes(mode)) throw new Error("Mode must be check, deploy or resume.");
   const checked = await checkPreconditions(root);
   if (mode === "check") return 0;
-  if ([1, 2].includes(checked.demo?.stopped?.exit_code)) throw new Error("The previous run stopped on an unexpected result. Owner review is required; no automatic resume.");
+  if ([1, 2].includes(checked.demo?.stopped?.exit_code) && !(mode === "resume" && isRetryableRecoveryEnvelopeStop(checked.demo))) {
+    throw new Error("The previous run stopped on an unexpected result. Owner review is required; no automatic resume.");
+  }
   let release = checked.release;
   if (!release) {
     if (mode === "resume" && !checked.deployment) throw new Error("No saved deployment exists. Run check, then deploy, to start a new release.");

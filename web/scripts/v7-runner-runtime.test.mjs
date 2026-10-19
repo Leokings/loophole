@@ -145,6 +145,38 @@ describe("V7 runner robustness", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("retries only the known r7 recovery-envelope stop and skips completed stages", async () => {
+    const completed = ["claims", "r1", "r2", "r3", "r4", "r5", "r6"];
+    const expectedCompleted = [...completed, "r7"];
+    const state = {
+      ...context().ctx.state,
+      steps: {
+        "guard:file-case-from-republic": { status: "FINALIZED_EXPECTED_FAILURE" },
+        "guard:record-holding": { status: "FINALIZED_EXPECTED_FAILURE" },
+        "guard:recover-effects": { status: "FINALIZED_SUCCESS" },
+      },
+      completed_stages: completed,
+      current_game: { round_number: 7, phase: "READY_TO_ADVANCE" },
+      stopped: { stage: "r7", message: "Case A recovery did not report both effect flags as false.", exit_code: 2 },
+    };
+    const ctx = { state, saveState: vi.fn(async () => {}) };
+    const r6 = vi.fn(() => { throw new Error("completed r6 must be skipped"); });
+    const r7 = vi.fn(async () => {});
+    await runScenario(ctx, [{ id: "r6", run: r6 }, { id: "r7", run: r7 }]);
+    expect(r6).not.toHaveBeenCalled();
+    expect(r7).toHaveBeenCalledOnce();
+    expect(state.stopped).toBeUndefined();
+    expect(state.completed_stages).toEqual(expectedCompleted);
+
+    const unrelated = {
+      ...state,
+      completed_stages: completed,
+      current_game: { round_number: 7, phase: "READY_TO_ADVANCE" },
+      stopped: { stage: "r7", message: "unexpected transaction result", exit_code: 2 },
+    };
+    await expect(runScenario({ state: unrelated }, [{ id: "r7", run: vi.fn() }])).rejects.toBeInstanceOf(ScenarioStopError);
+  });
+
   it("resumes the final fallback wait without waiting for a new COMMIT phase", async () => {
     const { ctx } = context("READY_TO_ADVANCE");
     ctx.state.fallback_prepared = true;
